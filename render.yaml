@@ -1,0 +1,20 @@
+services:
+  - type: web
+    name: premium-gaming-bot
+    env: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: python bot.py
+    envVars:
+      - key: BOT_TOKEN
+        sync: false
+      - key: FLUTTERWAVE_SECRET_KEY
+        sync: false
+      - key: FLUTTERWAVE_PUBLIC_KEY
+        sync: false
+      - key: PREMIUM_CHANNEL_ID
+        sync: false
+      - key: PREMIUM_CHANNEL_LINK
+        sync: false
+      - key: DATABASE_URL
+        sync: false
