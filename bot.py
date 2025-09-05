@@ -3,7 +3,6 @@ import os
 import logging
 import asyncio
 import sqlite3
-import psycopg2
 from datetime import datetime, timedelta
 from typing import Optional, Dict, Any
 import requests
@@ -12,7 +11,6 @@ from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes
 import json
 from dotenv import load_dotenv
-from urllib.parse import urlparse
 import threading
 from http.server import HTTPServer, BaseHTTPRequestHandler
 
@@ -32,7 +30,6 @@ FLUTTERWAVE_SECRET_KEY = os.getenv("FLUTTERWAVE_SECRET_KEY")
 FLUTTERWAVE_PUBLIC_KEY = os.getenv("FLUTTERWAVE_PUBLIC_KEY")
 PREMIUM_CHANNEL_ID = os.getenv("PREMIUM_CHANNEL_ID")
 PREMIUM_CHANNEL_LINK = os.getenv("PREMIUM_CHANNEL_LINK")
-DATABASE_URL = os.getenv("DATABASE_URL")  # For PostgreSQL if needed
 PORT = int(os.getenv("PORT", 8000))
 
 # Subscription plans (amounts in kobo - 100 kobo = ₦1)
@@ -45,77 +42,12 @@ PLANS = {
 
 class DatabaseManager:
     def __init__(self):
-        self.db_url = DATABASE_URL
-        if self.db_url and self.db_url.startswith('postgresql'):
-            self.use_postgresql = True
-            logger.info("Using PostgreSQL database")
-            self.init_postgresql()
-        else:
-            self.use_postgresql = False
-            self.db_path = "premium_bot.db"
-            logger.info("Using SQLite database")
-            self.init_sqlite()
+        self.db_path = "/tmp/premium_bot.db"  # Use /tmp for Render
+        self.init_database()
     
-    def get_connection(self):
-        """Get database connection"""
-        if self.use_postgresql:
-            return psycopg2.connect(self.db_url)
-        else:
-            return sqlite3.connect(self.db_path)
-    
-    def init_postgresql(self):
-        """Initialize PostgreSQL database"""
-        try:
-            conn = self.get_connection()
-            cursor = conn.cursor()
-            
-            # Users table
-            cursor.execute('''
-                CREATE TABLE IF NOT EXISTS users (
-                    user_id BIGINT PRIMARY KEY,
-                    username TEXT,
-                    first_name TEXT,
-                    subscription_plan TEXT,
-                    subscription_start TIMESTAMP,
-                    subscription_end TIMESTAMP,
-                    is_premium BOOLEAN DEFAULT FALSE,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                )
-            ''')
-            
-            # Payments table
-            cursor.execute('''
-                CREATE TABLE IF NOT EXISTS payments (
-                    id SERIAL PRIMARY KEY,
-                    user_id BIGINT,
-                    transaction_ref TEXT UNIQUE,
-                    amount REAL,
-                    plan_type TEXT,
-                    status TEXT,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    FOREIGN KEY (user_id) REFERENCES users (user_id)
-                )
-            ''')
-            
-            conn.commit()
-            conn.close()
-            logger.info("PostgreSQL database initialized successfully")
-            
-        except Exception as e:
-            logger.error(f"PostgreSQL initialization error: {str(e)}")
-            # Fallback to SQLite
-            self.use_postgresql = False
-            self.db_path = "premium_bot.db"
-            self.init_sqlite()
-    
-    def init_sqlite(self):
+    def init_database(self):
         """Initialize SQLite database"""
         try:
-            # Create database directory if it doesn't exist
-            db_dir = os.path.dirname(self.db_path) if os.path.dirname(self.db_path) else '.'
-            if not os.path.exists(db_dir):
-                os.makedirs(db_dir)
-                
             conn = sqlite3.connect(self.db_path)
             cursor = conn.cursor()
             
@@ -126,10 +58,10 @@ class DatabaseManager:
                     username TEXT,
                     first_name TEXT,
                     subscription_plan TEXT,
-                    subscription_start DATE,
-                    subscription_end DATE,
+                    subscription_start TEXT,
+                    subscription_end TEXT,
                     is_premium BOOLEAN DEFAULT FALSE,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    created_at TEXT DEFAULT CURRENT_TIMESTAMP
                 )
             ''')
             
@@ -142,37 +74,28 @@ class DatabaseManager:
                     amount REAL,
                     plan_type TEXT,
                     status TEXT,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
                     FOREIGN KEY (user_id) REFERENCES users (user_id)
                 )
             ''')
             
             conn.commit()
             conn.close()
-            logger.info("SQLite database initialized successfully")
+            logger.info("Database initialized successfully")
             
         except Exception as e:
-            logger.error(f"SQLite initialization error: {str(e)}")
+            logger.error(f"Database initialization error: {str(e)}")
     
     def add_user(self, user_id: int, username: str = None, first_name: str = None):
         """Add or update user in database"""
         try:
-            conn = self.get_connection()
+            conn = sqlite3.connect(self.db_path)
             cursor = conn.cursor()
             
-            if self.use_postgresql:
-                cursor.execute('''
-                    INSERT INTO users (user_id, username, first_name)
-                    VALUES (%s, %s, %s)
-                    ON CONFLICT (user_id) DO UPDATE SET
-                    username = EXCLUDED.username,
-                    first_name = EXCLUDED.first_name
-                ''', (user_id, username, first_name))
-            else:
-                cursor.execute('''
-                    INSERT OR REPLACE INTO users (user_id, username, first_name)
-                    VALUES (?, ?, ?)
-                ''', (user_id, username, first_name))
+            cursor.execute('''
+                INSERT OR REPLACE INTO users (user_id, username, first_name)
+                VALUES (?, ?, ?)
+            ''', (user_id, username, first_name))
             
             conn.commit()
             conn.close()
@@ -183,14 +106,10 @@ class DatabaseManager:
     def get_user(self, user_id: int) -> Optional[Dict]:
         """Get user information"""
         try:
-            conn = self.get_connection()
+            conn = sqlite3.connect(self.db_path)
             cursor = conn.cursor()
             
-            if self.use_postgresql:
-                cursor.execute('SELECT * FROM users WHERE user_id = %s', (user_id,))
-            else:
-                cursor.execute('SELECT * FROM users WHERE user_id = ?', (user_id,))
-            
+            cursor.execute('SELECT * FROM users WHERE user_id = ?', (user_id,))
             row = cursor.fetchone()
             conn.close()
             
@@ -207,21 +126,14 @@ class DatabaseManager:
     def update_subscription(self, user_id: int, plan: str, start_date: datetime, end_date: datetime):
         """Update user subscription"""
         try:
-            conn = self.get_connection()
+            conn = sqlite3.connect(self.db_path)
             cursor = conn.cursor()
             
-            if self.use_postgresql:
-                cursor.execute('''
-                    UPDATE users 
-                    SET subscription_plan = %s, subscription_start = %s, subscription_end = %s, is_premium = TRUE
-                    WHERE user_id = %s
-                ''', (plan, start_date, end_date, user_id))
-            else:
-                cursor.execute('''
-                    UPDATE users 
-                    SET subscription_plan = ?, subscription_start = ?, subscription_end = ?, is_premium = TRUE
-                    WHERE user_id = ?
-                ''', (plan, start_date, end_date, user_id))
+            cursor.execute('''
+                UPDATE users 
+                SET subscription_plan = ?, subscription_start = ?, subscription_end = ?, is_premium = 1
+                WHERE user_id = ?
+            ''', (plan, start_date.isoformat(), end_date.isoformat(), user_id))
             
             conn.commit()
             conn.close()
@@ -233,21 +145,14 @@ class DatabaseManager:
     def expire_user_subscription(self, user_id: int):
         """Expire user subscription"""
         try:
-            conn = self.get_connection()
+            conn = sqlite3.connect(self.db_path)
             cursor = conn.cursor()
             
-            if self.use_postgresql:
-                cursor.execute('''
-                    UPDATE users 
-                    SET is_premium = FALSE, subscription_plan = NULL
-                    WHERE user_id = %s
-                ''', (user_id,))
-            else:
-                cursor.execute('''
-                    UPDATE users 
-                    SET is_premium = FALSE, subscription_plan = NULL
-                    WHERE user_id = ?
-                ''', (user_id,))
+            cursor.execute('''
+                UPDATE users 
+                SET is_premium = 0, subscription_plan = NULL
+                WHERE user_id = ?
+            ''', (user_id,))
             
             conn.commit()
             conn.close()
@@ -259,20 +164,14 @@ class DatabaseManager:
     def get_expired_users(self) -> list:
         """Get users with expired subscriptions"""
         try:
-            conn = self.get_connection()
+            conn = sqlite3.connect(self.db_path)
             cursor = conn.cursor()
             
-            current_time = datetime.now()
-            if self.use_postgresql:
-                cursor.execute('''
-                    SELECT user_id FROM users 
-                    WHERE is_premium = TRUE AND subscription_end < %s
-                ''', (current_time,))
-            else:
-                cursor.execute('''
-                    SELECT user_id FROM users 
-                    WHERE is_premium = TRUE AND subscription_end < ?
-                ''', (current_time,))
+            current_time = datetime.now().isoformat()
+            cursor.execute('''
+                SELECT user_id FROM users 
+                WHERE is_premium = 1 AND subscription_end < ?
+            ''', (current_time,))
             
             expired_users = [row[0] for row in cursor.fetchall()]
             conn.close()
@@ -285,19 +184,13 @@ class DatabaseManager:
     def add_payment_record(self, user_id: int, transaction_ref: str, amount: float, plan_type: str):
         """Add payment record"""
         try:
-            conn = self.get_connection()
+            conn = sqlite3.connect(self.db_path)
             cursor = conn.cursor()
             
-            if self.use_postgresql:
-                cursor.execute('''
-                    INSERT INTO payments (user_id, transaction_ref, amount, plan_type, status)
-                    VALUES (%s, %s, %s, %s, 'pending')
-                ''', (user_id, transaction_ref, amount, plan_type))
-            else:
-                cursor.execute('''
-                    INSERT INTO payments (user_id, transaction_ref, amount, plan_type, status)
-                    VALUES (?, ?, ?, ?, 'pending')
-                ''', (user_id, transaction_ref, amount, plan_type))
+            cursor.execute('''
+                INSERT INTO payments (user_id, transaction_ref, amount, plan_type, status)
+                VALUES (?, ?, ?, ?, 'pending')
+            ''', (user_id, transaction_ref, amount, plan_type))
             
             conn.commit()
             conn.close()
@@ -309,17 +202,12 @@ class DatabaseManager:
     def update_payment_status(self, transaction_ref: str, status: str):
         """Update payment status"""
         try:
-            conn = self.get_connection()
+            conn = sqlite3.connect(self.db_path)
             cursor = conn.cursor()
             
-            if self.use_postgresql:
-                cursor.execute('''
-                    UPDATE payments SET status = %s WHERE transaction_ref = %s
-                ''', (status, transaction_ref))
-            else:
-                cursor.execute('''
-                    UPDATE payments SET status = ? WHERE transaction_ref = ?
-                ''', (status, transaction_ref))
+            cursor.execute('''
+                UPDATE payments SET status = ? WHERE transaction_ref = ?
+            ''', (status, transaction_ref))
             
             conn.commit()
             conn.close()
@@ -343,7 +231,7 @@ class FlutterwavePayment:
                 "tx_ref": tx_ref,
                 "amount": amount / 100,  # Convert kobo to naira
                 "currency": "NGN",
-                "redirect_url": "https://webhook.site/unique-id",  # Replace with your webhook
+                "redirect_url": "https://webhook.site/unique-id",
                 "meta": {
                     "user_id": user_id,
                     "plan": plan_name
@@ -355,8 +243,7 @@ class FlutterwavePayment:
                 },
                 "customizations": {
                     "title": "Premium Gaming Access",
-                    "description": f"Payment for {PLANS[plan_name]['name']}",
-                    "logo": "https://your-logo-url.com/logo.png"
+                    "description": f"Payment for {PLANS[plan_name]['name']}"
                 }
             }
             
@@ -476,11 +363,7 @@ Ready to upgrade your gaming experience?
         
         if user_data and user_data['is_premium']:
             try:
-                if isinstance(user_data['subscription_end'], str):
-                    end_date = datetime.strptime(user_data['subscription_end'], '%Y-%m-%d %H:%M:%S')
-                else:
-                    end_date = user_data['subscription_end']
-                    
+                end_date = datetime.fromisoformat(user_data['subscription_end'])
                 await query.edit_message_text(
                     f"✅ You already have an active premium subscription!\n"
                     f"📅 Expires: {end_date.strftime('%B %d, %Y at %H:%M')}\n"
@@ -664,11 +547,7 @@ Enjoy your premium experience! 🚀
         
         if user_data['is_premium']:
             try:
-                if isinstance(user_data['subscription_end'], str):
-                    end_date = datetime.strptime(user_data['subscription_end'], '%Y-%m-%d %H:%M:%S')
-                else:
-                    end_date = user_data['subscription_end']
-                    
+                end_date = datetime.fromisoformat(user_data['subscription_end'])
                 current_time = datetime.now()
                 
                 if end_date > current_time:
@@ -876,7 +755,7 @@ async def main():
     missing_vars = [var for var, value in required_vars.items() if not value]
     if missing_vars:
         logger.error(f"Missing required environment variables: {', '.join(missing_vars)}")
-        print(f"❌ Error: Missing required environment variables: {', '.join(missing_vars)}")
+        print(f"Missing required environment variables: {', '.join(missing_vars)}")
         print("Please check your environment variables and try again.")
         return
     
@@ -887,8 +766,7 @@ async def main():
         bot = PremiumBot()
         logger.info("Bot initialized successfully")
     except Exception as e:
-        logger.error(f"Failed to initialize bot: {str(e)}")
-        return
+        logger.error(f"Failed to initialize bot: {str(e)}")return
     
     # Create application
     try:
@@ -912,10 +790,10 @@ async def main():
     health_thread.start()
     
     # Start the bot
-    logger.info("🚀 Premium Gaming Bot started successfully!")
-    print("🎮 Premium Gaming Bot is running...")
-    print(f"💡 Health check server running on port {PORT}")
-    print("✅ Bot is ready to accept users!")
+    logger.info("Premium Gaming Bot started successfully!")
+    print("Premium Gaming Bot is running...")
+    print(f"Health check server running on port {PORT}")
+    print("Bot is ready to accept users!")
     
     try:
         await application.run_polling(drop_pending_updates=True)
@@ -929,7 +807,7 @@ if __name__ == '__main__':
         asyncio.run(main())
     except KeyboardInterrupt:
         logger.info("Bot stopped by user")
-        print("\n👋 Bot stopped by user")
+        print("\nBot stopped by user")
     except Exception as e:
         logger.error(f"Fatal error: {str(e)}")
-        print(f"\n❌ Fatal error: {str(e)}")
+        print(f"\nFatal error: {str(e)}")
