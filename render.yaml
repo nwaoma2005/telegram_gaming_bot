@@ -4,7 +4,7 @@ services:
     env: python
     plan: free
     buildCommand: pip install -r requirements.txt
-    startCommand: python bot.py
+    startCommand: python main.py
     envVars:
       - key: BOT_TOKEN
         sync: false
@@ -16,5 +16,15 @@ services:
         sync: false
       - key: PREMIUM_CHANNEL_LINK
         sync: false
-      - key: DATABASE_URL
+      - key: DATABASE_PATH
+        value: ./premium_bot.db
+      - key: PORT
+        value: 10000
+      - key: WEBHOOK_URL
+        fromService:
+          type: web
+          name: premium-gaming-bot
+          property: host
+      - key: ADMIN_USER_ID
         sync: false
+    healthCheckPath: /health
