@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 import os
 import logging
 import asyncio
@@ -795,8 +796,10 @@ Need help? We're here for you!
 • Subscription questions
 • Technical support
 
-We typically respond within 1 hour
-keyboard = [[InlineKeyboardButton("⬅️ Back to Menu", callback_data="back_to_menu")]]
+We typically respond within 1 hour! 🚀
+        """
+        
+        keyboard = [[InlineKeyboardButton("⬅️ Back to Menu", callback_data="back_to_menu")]]
         reply_markup = InlineKeyboardMarkup(keyboard)
         
         await query.edit_message_text(support_message, reply_markup=reply_markup, parse_mode='Markdown')
@@ -814,11 +817,11 @@ keyboard = [[InlineKeyboardButton("⬅️ Back to Menu", callback_data="back_to_
                 await context.bot.send_message(
                     chat_id=user_id,
                     text="""
-⏰ **Subscription Expired** ⏰
+**Subscription Expired**
 
 Your premium subscription has expired. You no longer have access to the premium channel.
 
-🚀 **Renew Now** to continue enjoying premium features!
+**Renew Now** to continue enjoying premium features!
                     """,
                     reply_markup=InlineKeyboardMarkup([
                         [InlineKeyboardButton("🚀 Renew Subscription", callback_data="upgrade")]
