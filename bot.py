@@ -1,4 +1,6 @@
+#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
+
 import os
 import logging
 import asyncio
@@ -9,7 +11,6 @@ import requests
 import uuid
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes
-import json
 from dotenv import load_dotenv
 import threading
 from http.server import HTTPServer, BaseHTTPRequestHandler
@@ -32,7 +33,7 @@ PREMIUM_CHANNEL_ID = os.getenv("PREMIUM_CHANNEL_ID")
 PREMIUM_CHANNEL_LINK = os.getenv("PREMIUM_CHANNEL_LINK")
 PORT = int(os.getenv("PORT", 8000))
 
-# Subscription plans (amounts in kobo - 100 kobo = ₦1)
+# Subscription plans (amounts in kobo - 100 kobo = 1 NGN)
 PLANS = {
     "daily": {"name": "Daily Plan", "amount": 100, "duration_days": 1},
     "weekly": {"name": "Weekly Plan", "amount": 500, "duration_days": 7},
@@ -42,7 +43,7 @@ PLANS = {
 
 class DatabaseManager:
     def __init__(self):
-        self.db_path = "/tmp/premium_bot.db"  # Use /tmp for Render
+        self.db_path = "/tmp/premium_bot.db"
         self.init_database()
     
     def init_database(self):
@@ -51,7 +52,6 @@ class DatabaseManager:
             conn = sqlite3.connect(self.db_path)
             cursor = conn.cursor()
             
-            # Users table
             cursor.execute('''
                 CREATE TABLE IF NOT EXISTS users (
                     user_id INTEGER PRIMARY KEY,
@@ -60,12 +60,11 @@ class DatabaseManager:
                     subscription_plan TEXT,
                     subscription_start TEXT,
                     subscription_end TEXT,
-                    is_premium BOOLEAN DEFAULT FALSE,
+                    is_premium INTEGER DEFAULT 0,
                     created_at TEXT DEFAULT CURRENT_TIMESTAMP
                 )
             ''')
             
-            # Payments table
             cursor.execute('''
                 CREATE TABLE IF NOT EXISTS payments (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -74,8 +73,7 @@ class DatabaseManager:
                     amount REAL,
                     plan_type TEXT,
                     status TEXT,
-                    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
-                    FOREIGN KEY (user_id) REFERENCES users (user_id)
+                    created_at TEXT DEFAULT CURRENT_TIMESTAMP
                 )
             ''')
             
@@ -229,7 +227,7 @@ class FlutterwavePayment:
             
             payload = {
                 "tx_ref": tx_ref,
-                "amount": amount / 100,  # Convert kobo to naira
+                "amount": amount / 100,
                 "currency": "NGN",
                 "redirect_url": "https://webhook.site/unique-id",
                 "meta": {
@@ -271,12 +269,9 @@ class FlutterwavePayment:
                     logger.error(f"Flutterwave API error: {data}")
                     return {"status": "error", "message": data.get('message', 'Payment link creation failed')}
             else:
-                logger.error(f"Flutterwave API HTTP error {response.status_code}: {response.text}")
+                logger.error(f"Flutterwave API HTTP error {response.status_code}")
                 return {"status": "error", "message": "Payment service temporarily unavailable"}
                 
-        except requests.exceptions.Timeout:
-            logger.error("Flutterwave API timeout")
-            return {"status": "error", "message": "Payment service timeout"}
         except Exception as e:
             logger.error(f"Payment link creation error: {str(e)}")
             return {"status": "error", "message": "Payment service unavailable"}
@@ -296,15 +291,11 @@ class FlutterwavePayment:
             )
             
             if response.status_code == 200:
-                data = response.json()
-                return data
+                return response.json()
             else:
-                logger.error(f"Payment verification HTTP error {response.status_code}: {response.text}")
+                logger.error(f"Payment verification HTTP error {response.status_code}")
                 return {"status": "error", "message": "Verification failed"}
                 
-        except requests.exceptions.Timeout:
-            logger.error("Payment verification timeout")
-            return {"status": "error", "message": "Verification timeout"}
         except Exception as e:
             logger.error(f"Payment verification error: {str(e)}")
             return {"status": "error", "message": "Verification service unavailable"}
@@ -320,7 +311,7 @@ class PremiumBot:
         self.db.add_user(user.id, user.username, user.first_name)
         
         welcome_message = f"""
-🎮 **Welcome to Premium Gaming Bot!** 🎮
+🎮 **Welcome to Premium Gaming Bot!**
 
 Hello {user.first_name}! 👋
 
@@ -374,7 +365,7 @@ Ready to upgrade your gaming experience?
                 logger.error(f"Error parsing subscription end date: {str(e)}")
         
         upgrade_message = """
-💎 **Choose Your Premium Plan** 💎
+💎 **Choose Your Premium Plan**
 
 Select the plan that best fits your gaming needs:
 
@@ -417,25 +408,14 @@ Select the plan that best fits your gaming needs:
         
         await query.edit_message_text("🔄 Creating payment link... Please wait.")
         
-        # Create payment link
-        payment_result = self.payment.create_payment_link(
-            user_id, 
-            plan_info['amount'], 
-            plan_id
-        )
+        payment_result = self.payment.create_payment_link(user_id, plan_info['amount'], plan_id)
         
         if payment_result['status'] == 'success':
-            # Store payment record
-            self.db.add_payment_record(
-                user_id, 
-                payment_result['tx_ref'], 
-                plan_info['amount'], 
-                plan_id
-            )
+            self.db.add_payment_record(user_id, payment_result['tx_ref'], plan_info['amount'], plan_id)
             
             price_naira = plan_info['amount'] / 100
             payment_message = f"""
-💳 **Payment Details** 💳
+💳 **Payment Details**
 
 📦 **Plan**: {plan_info['name']}
 💰 **Amount**: ₦{price_naira:.0f}
@@ -471,13 +451,11 @@ Select the plan that best fits your gaming needs:
         
         await query.edit_message_text("🔄 Verifying your payment... Please wait.")
         
-        # Verify payment with Flutterwave
         verification_result = self.payment.verify_payment(tx_ref)
         
         if (verification_result.get('status') == 'success' and 
             verification_result.get('data', {}).get('status') == 'successful'):
             
-            # Payment successful - grant access
             try:
                 plan_type = verification_result['data']['meta']['plan']
                 plan_info = PLANS.get(plan_type)
@@ -493,7 +471,7 @@ Select the plan that best fits your gaming needs:
                 self.db.update_payment_status(tx_ref, 'completed')
                 
                 success_message = f"""
-✅ **Payment Successful!** ✅
+✅ **Payment Successful!**
 
 🎉 Welcome to Premium Gaming!
 
@@ -525,7 +503,6 @@ Enjoy your premium experience! 🚀
                 )
                 
         else:
-            # Payment not successful or pending
             await query.edit_message_text(
                 "❌ Payment verification failed or payment is still pending.\n\n"
                 "If you've already paid, please wait a few minutes and try verifying again.\n"
@@ -555,7 +532,7 @@ Enjoy your premium experience! 🚀
                     days_left = time_left.days
                     
                     status_message = f"""
-✅ **Premium Subscription Active** ✅
+✅ **Premium Subscription Active**
 
 📦 **Plan**: {user_data['subscription_plan'].title()}
 📅 **Expires**: {end_date.strftime('%B %d, %Y at %H:%M')}
@@ -567,10 +544,9 @@ Enjoy your premium experience! 🚀
                     keyboard = [[InlineKeyboardButton("🎮 Access Premium Channel", url=PREMIUM_CHANNEL_LINK)]]
                     reply_markup = InlineKeyboardMarkup(keyboard)
                 else:
-                    # Subscription expired
                     self.db.expire_user_subscription(user_id)
                     status_message = """
-❌ **Subscription Expired** ❌
+❌ **Subscription Expired**
 
 Your premium subscription has expired. Upgrade now to regain access to premium features!
                     """
@@ -581,7 +557,7 @@ Your premium subscription has expired. Upgrade now to regain access to premium f
             except Exception as e:
                 logger.error(f"Error parsing subscription date: {str(e)}")
                 status_message = """
-❌ **Error checking subscription** ❌
+❌ **Error checking subscription**
 
 There was an error checking your subscription status. Please contact support.
                 """
@@ -589,7 +565,7 @@ There was an error checking your subscription status. Please contact support.
                 reply_markup = InlineKeyboardMarkup(keyboard)
         else:
             status_message = """
-📋 **Free Account** 📋
+📋 **Free Account**
 
 You currently have a free account. Upgrade to premium to access exclusive gaming content!
             """
@@ -626,7 +602,7 @@ You currently have a free account. Upgrade to premium to access exclusive gaming
         await query.answer()
         
         info_message = """
-📚 **About Premium Gaming Bot** 📚
+📚 **About Premium Gaming Bot**
 
 🎯 **Our Mission**: To provide gamers with the most accurate and valuable gaming insights.
 
@@ -660,14 +636,14 @@ You currently have a free account. Upgrade to premium to access exclusive gaming
         await query.answer()
         
         support_message = """
-📞 **Customer Support** 📞
+📞 **Customer Support**
 
 Need help? We're here for you!
 
 🕐 **Support Hours**: 24/7
-📧 **Email**: support@yourgamingbot.com
-💬 **Telegram**: @your_support_bot
-📱 **WhatsApp**: +234 XXX XXX XXXX
+📧 **Email**: blessednwaoma14@gmail.com
+💬 **Telegram**: @blessednwaoma
+📱 **WhatsApp**: +234 7042551379
 
 **Common Issues:**
 • Payment problems
@@ -689,10 +665,8 @@ We typically respond within 1 hour! 🚀
         
         for user_id in expired_users:
             try:
-                # Expire the subscription in database
                 self.db.expire_user_subscription(user_id)
                 
-                # Send expiration notification
                 await context.bot.send_message(
                     chat_id=user_id,
                     text="""
@@ -708,7 +682,6 @@ Your premium subscription has expired. You no longer have access to the premium 
                     parse_mode='Markdown'
                 )
                 
-                # Try to remove from premium channel (optional)
                 if PREMIUM_CHANNEL_ID:
                     try:
                         await context.bot.ban_chat_member(PREMIUM_CHANNEL_ID, user_id)
@@ -720,7 +693,6 @@ Your premium subscription has expired. You no longer have access to the premium 
             except Exception as e:
                 logger.error(f"Error processing expired user {user_id}: {str(e)}")
 
-# Health check endpoint for Render
 class HealthHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
@@ -729,7 +701,6 @@ class HealthHandler(BaseHTTPRequestHandler):
         self.wfile.write(b'Bot is running!')
     
     def log_message(self, format, *args):
-        # Suppress HTTP server logs
         pass
 
 def run_health_server():
@@ -743,7 +714,6 @@ def run_health_server():
 
 async def main():
     """Start the bot"""
-    # Validate required environment variables
     required_vars = {
         'BOT_TOKEN': BOT_TOKEN,
         'FLUTTERWAVE_SECRET_KEY': FLUTTERWAVE_SECRET_KEY,
@@ -756,19 +726,17 @@ async def main():
     if missing_vars:
         logger.error(f"Missing required environment variables: {', '.join(missing_vars)}")
         print(f"Missing required environment variables: {', '.join(missing_vars)}")
-        print("Please check your environment variables and try again.")
         return
     
     logger.info("All required environment variables found")
     
-    # Initialize bot
     try:
         bot = PremiumBot()
         logger.info("Bot initialized successfully")
     except Exception as e:
-        logger.error(f"Failed to initialize bot: {str(e)}")return
+        logger.error(f"Failed to initialize bot: {str(e)}")
+        return
     
-    # Create application
     try:
         application = Application.builder().token(BOT_TOKEN).build()
         logger.info("Telegram application created successfully")
@@ -776,20 +744,16 @@ async def main():
         logger.error(f"Failed to create Telegram application: {str(e)}")
         return
     
-    # Add handlers
     application.add_handler(CommandHandler("start", bot.start))
     application.add_handler(CommandHandler("status", bot.check_subscription_status))
-    application.add_handler(CommandHandler("help", bot.start))  # Alias for start
+    application.add_handler(CommandHandler("help", bot.start))
     application.add_handler(CallbackQueryHandler(bot.button_handler))
     
-    # Schedule background task to check expired subscriptions every hour
     application.job_queue.run_repeating(bot.check_expired_subscriptions, interval=3600, first=10)
     
-    # Start health check server in background (required for Render)
     health_thread = threading.Thread(target=run_health_server, daemon=True)
     health_thread.start()
     
-    # Start the bot
     logger.info("Premium Gaming Bot started successfully!")
     print("Premium Gaming Bot is running...")
     print(f"Health check server running on port {PORT}")
@@ -807,7 +771,7 @@ if __name__ == '__main__':
         asyncio.run(main())
     except KeyboardInterrupt:
         logger.info("Bot stopped by user")
-        print("\nBot stopped by user")
+        print("Bot stopped by user")
     except Exception as e:
         logger.error(f"Fatal error: {str(e)}")
-        print(f"\nFatal error: {str(e)}")
+        print(f"Fatal error: {str(e)}")
