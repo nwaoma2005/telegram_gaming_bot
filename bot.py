@@ -385,7 +385,7 @@ Ready to upgrade your gaming experience?"""
         
         await update.message.reply_text(welcome_text, reply_markup=reply_markup)
     
-    async def upgrade_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+    async def upgrade_menu(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         query = update.callback_query
         await query.answer()
         
@@ -593,7 +593,7 @@ Enjoy your premium experience! 🚀"""
                 ])
             )
     
-    async def learn_more_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+    async def learn_more(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         query = update.callback_query
         await query.answer()
         
@@ -623,7 +623,7 @@ Enjoy your premium experience! 🚀"""
         
         await query.edit_message_text(info_text, reply_markup=reply_markup)
     
-    async def support_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+    async def support(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         query = update.callback_query
         await query.answer()
         
@@ -632,9 +632,8 @@ Enjoy your premium experience! 🚀"""
 Need help? We're here for you!
 
 🕐 Support Hours: 24/7
-📧 Email: blessednwaoma14@gmail.com
-💬 Telegram: @blessednwaoma
-whatsapp:+2347042551379
+📧 Email: support@yourgamingbot.com
+💬 Telegram: @your_support_bot
 
 Common Issues:
 • Payment problems
