@@ -624,9 +624,9 @@ Enjoy your premium experience! 🚀"""
         
         info_text = """📚 About Premium Gaming Bot
 
-🎯 **Our Mission:** To provide gamers with the most accurate and valuable gaming insights.
+🎯 Our Mission: To provide gamers with the most accurate and valuable gaming insights.
 
-💎 **Premium Features:**
+💎 Premium Features:
 • 90%+ accuracy rate on predictions
 • Daily exclusive gaming tips
 • Advanced strategy guides
@@ -636,20 +636,20 @@ Enjoy your premium experience! 🚀"""
 • Early access to new games
 • Premium analytics dashboard
 
-📊 **Success Rate:** Our premium members report 3x better gaming performance
+📊 Success Rate: Our premium members report 3x better gaming performance
 
-🔒 **Secure Payments:** All transactions processed through trusted Flutterwave gateway with bank-level security
+🔒 Secure Payments: All transactions processed through trusted Flutterwave gateway with bank-level security
 
-💪 **Community:** Join 1000+ satisfied premium members in our exclusive community
+💪 Community: Join 1000+ satisfied premium members in our exclusive community
 
-🎮 **What Makes Us Different:**
+🎮 What Makes Us Different:
 • Professional gaming analysts
 • Real-time market insights
 • Proven track record
 • 24/7 customer support
 • Mobile-friendly platform
 
-🏆 **Join the winning team today!**"""
+🏆 Join the winning team today!"""
         
         keyboard = [
             [InlineKeyboardButton("💎 Upgrade Now", callback_data="upgrade")],
@@ -668,15 +668,15 @@ Enjoy your premium experience! 🚀"""
 
 Need help? We're here for you 24/7!
 
-**Contact Methods:**
+Contact Methods:
 💬 Telegram: @blessednwaoma
 📱 WhatsApp: +2347042551379
 📧 Email: blessednwaoma7@gmail.com
 
-**Support Hours:** 24/7 Available
-**Response Time:** Within 1 hour
+Support Hours: 24/7 Available
+Response Time: Within 1 hour
 
-**Common Issues We Help With:**
+Common Issues We Help With:
 • Payment problems
 • Channel access issues
 • Subscription questions
@@ -684,7 +684,7 @@ Need help? We're here for you 24/7!
 • Account management
 • Billing inquiries
 
-**Quick Tips:**
+Quick Tips:
 • Include your user ID when contacting support
 • Describe your issue clearly
 • Mention any error messages you see
@@ -794,7 +794,7 @@ def main():
     bot = PremiumBot(CONFIG)
     logger.info("Bot initialized successfully")
     
-    # Build application with conflict resolution
+    # Build application
     application = Application.builder().token(CONFIG.BOT_TOKEN).build()
     bot.application = application
     logger.info("Telegram application created successfully")
@@ -823,7 +823,7 @@ def main():
     for cmd in BOT_COMMANDS:
         print(f"  /{cmd.command} - {cmd.description}")
     
-    # Main loop with conflict handling and restart capability
+    # Main loop with conflict handling
     max_retries = 5
     retry_count = 0
     
@@ -831,12 +831,11 @@ def main():
         try:
             logger.info(f"Starting bot polling (attempt {retry_count + 1}/{max_retries})")
             
-            # Setup bot commands
-            async def setup_commands():
+            # Setup bot commands after starting
+            async def post_init(application):
                 await bot.setup_bot_commands()
             
-            # Run setup in the application's context
-            application.job_queue.run_once(lambda context: setup_commands(), when=0)
+            application.post_init = post_init
             
             application.run_polling(
                 drop_pending_updates=True,
@@ -849,7 +848,7 @@ def main():
             retry_count += 1
             logger.warning(f"Telegram conflict detected: {str(e)}")
             if retry_count < max_retries:
-                wait_time = min(retry_count * 10, 60)  # Progressive backoff, max 60 seconds
+                wait_time = min(retry_count * 10, 60)
                 logger.info(f"Waiting {wait_time} seconds before retry {retry_count + 1}/{max_retries}")
                 time.sleep(wait_time)
             else:
@@ -878,7 +877,12 @@ if __name__ == '__main__':
     except KeyboardInterrupt:
         logger.info("Bot stopped by user")
     except Exception as e:
-        logger.error(f"Fatal error: {str(e)}") to Menu", callback_data="back_to_menu")])
+        logger.error(f"Fatal error: {str(e)}") ₦{price_naira:.0f}",
+                    callback_data=f"plan_{plan_id}"
+                )
+            ])
+        
+        keyboard.append([InlineKeyboardButton("⬅️ Back to Menu", callback_data="back_to_menu")])
         reply_markup = InlineKeyboardMarkup(keyboard)
         
         await update.message.reply_text(upgrade_text, reply_markup=reply_markup)
@@ -1191,9 +1195,4 @@ Select the plan that best fits your gaming needs:
             price_naira = plan_info['amount'] / 100
             keyboard.append([
                 InlineKeyboardButton(
-                    f"{plan_info['name']} - ₦{price_naira:.0f}",
-                    callback_data=f"plan_{plan_id}"
-                )
-            ])
-        
-        keyboard.append([InlineKeyboardButton("⬅️ Back
+                    f"{plan_info['name']} -
