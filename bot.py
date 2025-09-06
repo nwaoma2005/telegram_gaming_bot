@@ -15,7 +15,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from http.server import HTTPServer, BaseHTTPRequestHandler
 
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, BotCommand
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes
 from telegram.error import Conflict, NetworkError, TimedOut
 from dotenv import load_dotenv
@@ -78,6 +78,18 @@ PLANS = {
     "monthly": {"name": "Monthly Plan", "amount": 1500, "duration_days": 30},
     "yearly": {"name": "Yearly Plan", "amount": 15000, "duration_days": 365}
 }
+
+# Bot commands for BotFather
+BOT_COMMANDS = [
+    BotCommand("start", "🚀 Start the bot and see main menu"),
+    BotCommand("upgrade", "💎 View premium subscription plans"),
+    BotCommand("status", "📊 Check your subscription status"),
+    BotCommand("plans", "📋 View all available plans"),
+    BotCommand("support", "📞 Get customer support information"),
+    BotCommand("help", "❓ Get help and learn more about the bot"),
+    BotCommand("contact", "📧 Get contact information"),
+    BotCommand("premium", "🎮 Access premium channel link"),
+]
 
 class DatabaseManager:
     def __init__(self, db_path: str):
@@ -348,6 +360,14 @@ class PremiumBot:
         self.rate_limiter = RateLimiter()
         self.application = None
     
+    async def setup_bot_commands(self):
+        """Setup bot commands for BotFather menu"""
+        try:
+            await self.application.bot.set_my_commands(BOT_COMMANDS)
+            logger.info("Bot commands set successfully")
+        except Exception as e:
+            logger.error(f"Error setting bot commands: {str(e)}")
+    
     async def start_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         user = update.effective_user
         
@@ -374,10 +394,13 @@ Premium Benefits:
 🏆 Priority customer support
 📊 Detailed analytics and statistics
 
-Ready to upgrade your gaming experience?"""
+🔥 Ready to upgrade your gaming experience?
+
+📚 Use /help to see all available commands"""
         
         keyboard = [
-            [InlineKeyboardButton("🚀 Upgrade to Premium", callback_data="upgrade")],
+            [InlineKeyboardButton("💎 Upgrade to Premium", callback_data="upgrade")],
+            [InlineKeyboardButton("📊 Check Status", callback_data="status")],
             [InlineKeyboardButton("ℹ️ Learn More", callback_data="learn_more")],
             [InlineKeyboardButton("📞 Support", callback_data="support")]
         ]
@@ -385,11 +408,12 @@ Ready to upgrade your gaming experience?"""
         
         await update.message.reply_text(welcome_text, reply_markup=reply_markup)
     
-    async def upgrade_menu(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        query = update.callback_query
-        await query.answer()
+    async def upgrade_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handle /upgrade command"""
+        user = update.effective_user
+        self.db.add_user(user.id, user.username, user.first_name)
         
-        user_data = self.db.get_user(query.from_user.id)
+        user_data = self.db.get_user(user.id)
         
         if user_data and user_data['is_premium']:
             try:
@@ -397,10 +421,11 @@ Ready to upgrade your gaming experience?"""
                 current_time = datetime.now(timezone.utc)
                 
                 if end_date > current_time:
-                    await query.edit_message_text(
+                    await update.message.reply_text(
                         f"✅ You already have an active premium subscription!\n"
                         f"📅 Expires: {end_date.strftime('%B %d, %Y at %H:%M UTC')}\n"
-                        f"🎯 Plan: {user_data['subscription_plan'].title()}"
+                        f"🎯 Plan: {user_data['subscription_plan'].title()}\n\n"
+                        f"🎮 Access your premium channel: {self.config.PREMIUM_CHANNEL_LINK}"
                     )
                     return
             except Exception as e:
@@ -599,24 +624,36 @@ Enjoy your premium experience! 🚀"""
         
         info_text = """📚 About Premium Gaming Bot
 
-🎯 Our Mission: To provide gamers with the most accurate and valuable gaming insights.
+🎯 **Our Mission:** To provide gamers with the most accurate and valuable gaming insights.
 
-💎 Premium Features:
+💎 **Premium Features:**
 • 90%+ accuracy rate on predictions
 • Daily exclusive gaming tips
 • Advanced strategy guides
 • VIP community access
 • Priority customer support
 • Weekly bonus content
+• Early access to new games
+• Premium analytics dashboard
 
-📊 Success Rate: Our premium members report 3x better gaming performance
+📊 **Success Rate:** Our premium members report 3x better gaming performance
 
-🔒 Secure: All payments processed through trusted Flutterwave gateway
+🔒 **Secure Payments:** All transactions processed through trusted Flutterwave gateway with bank-level security
 
-💪 Community: Join 1000+ satisfied premium members"""
+💪 **Community:** Join 1000+ satisfied premium members in our exclusive community
+
+🎮 **What Makes Us Different:**
+• Professional gaming analysts
+• Real-time market insights
+• Proven track record
+• 24/7 customer support
+• Mobile-friendly platform
+
+🏆 **Join the winning team today!**"""
         
         keyboard = [
-            [InlineKeyboardButton("🚀 Upgrade Now", callback_data="upgrade")],
+            [InlineKeyboardButton("💎 Upgrade Now", callback_data="upgrade")],
+            [InlineKeyboardButton("📋 View Plans", callback_data="upgrade")],
             [InlineKeyboardButton("⬅️ Back to Menu", callback_data="back_to_menu")]
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
@@ -629,21 +666,36 @@ Enjoy your premium experience! 🚀"""
         
         support_text = """📞 Customer Support
 
-Need help? We're here for you!
+Need help? We're here for you 24/7!
 
-🕐 Support Hours: 24/7
-📧 Email: support@yourgamingbot.com
-💬 Telegram: @your_support_bot
+**Contact Methods:**
+💬 Telegram: @blessednwaoma
+📱 WhatsApp: +2347042551379
+📧 Email: blessednwaoma7@gmail.com
 
-Common Issues:
+**Support Hours:** 24/7 Available
+**Response Time:** Within 1 hour
+
+**Common Issues We Help With:**
 • Payment problems
 • Channel access issues
 • Subscription questions
 • Technical support
+• Account management
+• Billing inquiries
 
-We typically respond within 1 hour!"""
+**Quick Tips:**
+• Include your user ID when contacting support
+• Describe your issue clearly
+• Mention any error messages you see
+
+We're committed to providing excellent customer service!"""
         
-        keyboard = [[InlineKeyboardButton("⬅️ Back to Menu", callback_data="back_to_menu")]]
+        keyboard = [
+            [InlineKeyboardButton("💬 Contact on Telegram", url="https://t.me/blessednwaoma")],
+            [InlineKeyboardButton("📱 WhatsApp Support", url="https://wa.me/2347042551379")],
+            [InlineKeyboardButton("⬅️ Back to Menu", callback_data="back_to_menu")]
+        ]
         reply_markup = InlineKeyboardMarkup(keyboard)
         
         await query.edit_message_text(support_text, reply_markup=reply_markup)
@@ -662,16 +714,28 @@ We typically respond within 1 hour!"""
                 await self.learn_more(update, context)
             elif query.data == "support":
                 await self.support(update, context)
+            elif query.data == "status":
+                user = query.from_user
+                # Create a mock update for status command
+                mock_update = Update(
+                    update_id=query.update.update_id,
+                    message=query.message
+                )
+                mock_update.effective_user = user
+                await self.status_command(mock_update, context)
             elif query.data == "back_to_menu":
                 user = query.from_user
                 welcome_text = f"""🎮 Welcome to Premium Gaming Bot!
 
 Hello {user.first_name}! 
 
-Ready to upgrade your gaming experience?"""
+Ready to upgrade your gaming experience?
+
+📚 Use /help to see all available commands"""
                 
                 keyboard = [
-                    [InlineKeyboardButton("🚀 Upgrade to Premium", callback_data="upgrade")],
+                    [InlineKeyboardButton("💎 Upgrade to Premium", callback_data="upgrade")],
+                    [InlineKeyboardButton("📊 Check Status", callback_data="status")],
                     [InlineKeyboardButton("ℹ️ Learn More", callback_data="learn_more")],
                     [InlineKeyboardButton("📞 Support", callback_data="support")]
                 ]
@@ -735,8 +799,17 @@ def main():
     bot.application = application
     logger.info("Telegram application created successfully")
     
-    # Add handlers
+    # Add command handlers
     application.add_handler(CommandHandler("start", bot.start_command))
+    application.add_handler(CommandHandler("upgrade", bot.upgrade_command))
+    application.add_handler(CommandHandler("status", bot.status_command))
+    application.add_handler(CommandHandler("plans", bot.plans_command))
+    application.add_handler(CommandHandler("support", bot.support_command))
+    application.add_handler(CommandHandler("help", bot.help_command))
+    application.add_handler(CommandHandler("contact", bot.contact_command))
+    application.add_handler(CommandHandler("premium", bot.premium_command))
+    
+    # Add callback query handler
     application.add_handler(CallbackQueryHandler(bot.button_callback))
     
     # Start health check server in background
@@ -746,6 +819,9 @@ def main():
     logger.info("Premium Gaming Bot started successfully!")
     print("Premium Gaming Bot is running...")
     print(f"Health check server running on port {CONFIG.PORT}")
+    print("\n🤖 Available Commands:")
+    for cmd in BOT_COMMANDS:
+        print(f"  /{cmd.command} - {cmd.description}")
     
     # Main loop with conflict handling and restart capability
     max_retries = 5
@@ -754,6 +830,14 @@ def main():
     while not shutdown_flag and retry_count < max_retries:
         try:
             logger.info(f"Starting bot polling (attempt {retry_count + 1}/{max_retries})")
+            
+            # Setup bot commands
+            async def setup_commands():
+                await bot.setup_bot_commands()
+            
+            # Run setup in the application's context
+            application.job_queue.run_once(lambda context: setup_commands(), when=0)
+            
             application.run_polling(
                 drop_pending_updates=True,
                 close_loop=False,
@@ -794,4 +878,322 @@ if __name__ == '__main__':
     except KeyboardInterrupt:
         logger.info("Bot stopped by user")
     except Exception as e:
-        logger.error(f"Fatal error: {str(e)}")
+        logger.error(f"Fatal error: {str(e)}") to Menu", callback_data="back_to_menu")])
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
+        await update.message.reply_text(upgrade_text, reply_markup=reply_markup)
+    
+    async def status_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handle /status command"""
+        user = update.effective_user
+        self.db.add_user(user.id, user.username, user.first_name)
+        
+        user_data = self.db.get_user(user.id)
+        
+        if user_data and user_data['is_premium']:
+            try:
+                end_date = datetime.fromisoformat(user_data['subscription_end'])
+                start_date = datetime.fromisoformat(user_data['subscription_start'])
+                current_time = datetime.now(timezone.utc)
+                
+                if end_date > current_time:
+                    days_remaining = (end_date - current_time).days
+                    status_text = f"""✅ Premium Subscription Active
+
+👤 User: {user.first_name}
+🎯 Plan: {user_data['subscription_plan'].title()}
+📅 Started: {start_date.strftime('%B %d, %Y')}
+⏰ Expires: {end_date.strftime('%B %d, %Y at %H:%M UTC')}
+📊 Days Remaining: {days_remaining} days
+
+🎮 Premium Channel: {self.config.PREMIUM_CHANNEL_LINK}"""
+                else:
+                    status_text = f"""❌ Premium Subscription Expired
+
+👤 User: {user.first_name}
+🎯 Last Plan: {user_data['subscription_plan'].title()}
+📅 Expired: {end_date.strftime('%B %d, %Y at %H:%M UTC')}
+
+💎 Renew your subscription to regain access to premium features!"""
+            except Exception as e:
+                logger.error(f"Error parsing subscription dates: {str(e)}")
+                status_text = "❌ Error retrieving subscription status. Please contact support."
+        else:
+            status_text = f"""📊 Subscription Status
+
+👤 User: {user.first_name}
+💎 Status: Free User
+🎯 Premium: Not Active
+
+🚀 Upgrade to premium to unlock exclusive gaming content and features!"""
+        
+        keyboard = [
+            [InlineKeyboardButton("💎 Upgrade Now", callback_data="upgrade")],
+            [InlineKeyboardButton("📞 Support", callback_data="support")]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
+        await update.message.reply_text(status_text, reply_markup=reply_markup)
+    
+    async def plans_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handle /plans command"""
+        user = update.effective_user
+        self.db.add_user(user.id, user.username, user.first_name)
+        
+        plans_text = """📋 Premium Subscription Plans
+
+Choose the perfect plan for your gaming needs:
+
+"""
+        
+        for plan_id, plan_info in PLANS.items():
+            price_naira = plan_info['amount'] / 100
+            plans_text += f"""💎 **{plan_info['name']}**
+💰 Price: ₦{price_naira:.0f}
+⏰ Duration: {plan_info['duration_days']} days
+💸 Daily Cost: ₦{price_naira/plan_info['duration_days']:.2f}
+
+"""
+        
+        plans_text += """✨ All plans include:
+• Exclusive gaming strategies
+• Premium predictions
+• VIP community access
+• Priority customer support
+• Advanced analytics
+• Early access to content"""
+        
+        keyboard = [
+            [InlineKeyboardButton("💎 Subscribe Now", callback_data="upgrade")],
+            [InlineKeyboardButton("📊 Check Status", callback_data="status")]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
+        await update.message.reply_text(plans_text, reply_markup=reply_markup)
+    
+    async def help_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handle /help command"""
+        user = update.effective_user
+        self.db.add_user(user.id, user.username, user.first_name)
+        
+        help_text = """❓ Help & Commands Guide
+
+**Available Commands:**
+/start - 🚀 Start the bot and see main menu
+/upgrade - 💎 View premium subscription plans
+/status - 📊 Check your subscription status
+/plans - 📋 View all available plans
+/support - 📞 Get customer support
+/help - ❓ Show this help message
+/contact - 📧 Get contact information
+/premium - 🎮 Get premium channel link
+
+**About Premium Gaming Bot:**
+🎯 Mission: Provide accurate gaming insights and strategies
+💎 Premium Features: 90%+ accuracy predictions, exclusive tips, VIP community
+🔒 Secure: Flutterwave payment processing
+📊 Success Rate: 3x better gaming performance for premium members
+
+**Getting Started:**
+1. Use /plans to see subscription options
+2. Use /upgrade to subscribe
+3. Complete payment via secure link
+4. Get instant access to premium content
+
+**Need Help?**
+Use /support or /contact for assistance!"""
+        
+        keyboard = [
+            [InlineKeyboardButton("💎 Upgrade Now", callback_data="upgrade")],
+            [InlineKeyboardButton("📞 Support", callback_data="support")]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
+        await update.message.reply_text(help_text, reply_markup=reply_markup)
+    
+    async def support_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handle /support command"""
+        user = update.effective_user
+        self.db.add_user(user.id, user.username, user.first_name)
+        
+        support_text = """📞 Customer Support
+
+Need help? We're here for you 24/7!
+
+**Contact Methods:**
+💬 Telegram: @blessednwaoma
+📱 WhatsApp: +2347042551379
+📧 Email: blessednwaoma7@gmail.com
+
+**Support Hours:** 24/7 Available
+**Response Time:** Within 1 hour
+
+**Common Issues We Help With:**
+• Payment problems
+• Channel access issues
+• Subscription questions
+• Technical support
+• Account management
+• Billing inquiries
+
+**Quick Tips:**
+• Include your user ID when contacting support
+• Describe your issue clearly
+• Mention any error messages you see
+
+We're committed to providing excellent customer service!"""
+        
+        keyboard = [
+            [InlineKeyboardButton("💬 Contact on Telegram", url="https://t.me/blessednwaoma")],
+            [InlineKeyboardButton("📱 WhatsApp Support", url="https://wa.me/2347042551379")],
+            [InlineKeyboardButton("⬅️ Back to Menu", callback_data="back_to_menu")]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
+        await update.message.reply_text(support_text, reply_markup=reply_markup)
+    
+    async def contact_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handle /contact command"""
+        user = update.effective_user
+        self.db.add_user(user.id, user.username, user.first_name)
+        
+        contact_text = """📧 Contact Information
+
+**Get in touch with us:**
+
+**Primary Contact:**
+👤 Name: Blessed Nwaoma
+💬 Telegram: @blessednwaoma
+📱 WhatsApp: +2347042551379
+📧 Email: blessednwaoma7@gmail.com
+
+**Response Times:**
+• Telegram: Instant - 30 minutes
+• WhatsApp: 5 minutes - 1 hour
+• Email: 1 - 6 hours
+
+**Best Contact Method:**
+💬 Telegram for fastest response!
+
+**Business Hours:**
+🕐 Available: 24/7
+🌍 Timezone: WAT (West Africa Time)
+
+Feel free to reach out for any questions, support, or feedback!"""
+        
+        keyboard = [
+            [InlineKeyboardButton("💬 Message on Telegram", url="https://t.me/blessednwaoma")],
+            [InlineKeyboardButton("📱 WhatsApp Chat", url="https://wa.me/2347042551379")],
+            [InlineKeyboardButton("📞 Support", callback_data="support")]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
+        await update.message.reply_text(contact_text, reply_markup=reply_markup)
+    
+    async def premium_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handle /premium command"""
+        user = update.effective_user
+        self.db.add_user(user.id, user.username, user.first_name)
+        
+        user_data = self.db.get_user(user.id)
+        
+        if user_data and user_data['is_premium']:
+            try:
+                end_date = datetime.fromisoformat(user_data['subscription_end'])
+                current_time = datetime.now(timezone.utc)
+                
+                if end_date > current_time:
+                    premium_text = f"""🎮 Premium Channel Access
+
+✅ Your premium subscription is active!
+
+🔗 **Premium Channel Link:**
+{self.config.PREMIUM_CHANNEL_LINK}
+
+📊 **Your Status:**
+• Plan: {user_data['subscription_plan'].title()}
+• Expires: {end_date.strftime('%B %d, %Y')}
+
+Enjoy exclusive gaming content! 🚀"""
+                    
+                    keyboard = [
+                        [InlineKeyboardButton("🎮 Join Premium Channel", url=self.config.PREMIUM_CHANNEL_LINK)],
+                        [InlineKeyboardButton("📊 Check Status", callback_data="status")]
+                    ]
+                else:
+                    premium_text = """❌ Premium Access Expired
+
+Your premium subscription has expired. Renew now to regain access to exclusive gaming content!"""
+                    
+                    keyboard = [
+                        [InlineKeyboardButton("💎 Renew Subscription", callback_data="upgrade")],
+                        [InlineKeyboardButton("📋 View Plans", callback_data="plans")]
+                    ]
+            except Exception as e:
+                logger.error(f"Error checking premium status: {str(e)}")
+                premium_text = "❌ Error checking premium status. Please contact support."
+                keyboard = [[InlineKeyboardButton("📞 Support", callback_data="support")]]
+        else:
+            premium_text = """🎮 Premium Channel Access
+
+❌ You don't have an active premium subscription.
+
+Upgrade now to access:
+• Exclusive gaming strategies
+• Premium predictions
+• VIP community
+• Advanced analytics
+• Priority support"""
+            
+            keyboard = [
+                [InlineKeyboardButton("💎 Upgrade Now", callback_data="upgrade")],
+                [InlineKeyboardButton("📋 View Plans", callback_data="plans")]
+            ]
+        
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        await update.message.reply_text(premium_text, reply_markup=reply_markup)
+    
+    async def upgrade_menu(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        query = update.callback_query
+        await query.answer()
+        
+        user_data = self.db.get_user(query.from_user.id)
+        
+        if user_data and user_data['is_premium']:
+            try:
+                end_date = datetime.fromisoformat(user_data['subscription_end'])
+                current_time = datetime.now(timezone.utc)
+                
+                if end_date > current_time:
+                    await query.edit_message_text(
+                        f"✅ You already have an active premium subscription!\n"
+                        f"📅 Expires: {end_date.strftime('%B %d, %Y at %H:%M UTC')}\n"
+                        f"🎯 Plan: {user_data['subscription_plan'].title()}\n\n"
+                        f"🎮 Premium Channel: {self.config.PREMIUM_CHANNEL_LINK}"
+                    )
+                    return
+            except Exception as e:
+                logger.error(f"Error parsing subscription date: {str(e)}")
+        
+        upgrade_text = """💎 Choose Your Premium Plan
+
+Select the plan that best fits your gaming needs:
+
+📊 All plans include:
+• Access to premium gaming channel
+• Exclusive gaming strategies
+• Priority support
+• Advanced analytics
+• VIP community access"""
+        
+        keyboard = []
+        for plan_id, plan_info in PLANS.items():
+            price_naira = plan_info['amount'] / 100
+            keyboard.append([
+                InlineKeyboardButton(
+                    f"{plan_info['name']} - ₦{price_naira:.0f}",
+                    callback_data=f"plan_{plan_id}"
+                )
+            ])
+        
+        keyboard.append([InlineKeyboardButton("⬅️ Back
