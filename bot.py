@@ -52,7 +52,7 @@ def load_config() -> Config:
         PREMIUM_CHANNEL_ID=os.getenv("PREMIUM_CHANNEL_ID", ""),
         PREMIUM_CHANNEL_LINK=os.getenv("PREMIUM_CHANNEL_LINK", ""),
         DATABASE_PATH=os.getenv("DATABASE_PATH", "./premium_bot.db"),
-        PORT=int(os.getenv("PORT", 8000)),
+        PORT=int(os.getenv("PORT", 10000)),
         WEBHOOK_URL=os.getenv("WEBHOOK_URL", "https://webhook.site/unique-id"),
         ADMIN_USER_ID=os.getenv("ADMIN_USER_ID", "")
     )
@@ -1005,6 +1005,7 @@ async def main():
         return
     
     try:
+        # Build application without job queue to avoid errors
         application = Application.builder().token(CONFIG.BOT_TOKEN).build()
         logger.info("Telegram application created successfully")
     except Exception as e:
@@ -1018,9 +1019,6 @@ async def main():
     application.add_handler(CommandHandler("stats", bot.admin_stats))
     application.add_handler(CallbackQueryHandler(bot.button_handler))
     
-    # Schedule expired subscription checks every hour
-    application.job_queue.run_repeating(bot.check_expired_subscriptions, interval=3600, first=10)
-    
     # Start health check server in background thread
     health_thread = threading.Thread(target=run_health_server, daemon=True)
     health_thread.start()
@@ -1031,17 +1029,8 @@ async def main():
     print("Bot is ready to accept users!")
     
     try:
-        # Use webhook if URL is provided, otherwise use polling
-        if CONFIG.WEBHOOK_URL and not CONFIG.WEBHOOK_URL.startswith("https://webhook.site"):
-            webhook_url = f"{CONFIG.WEBHOOK_URL}/webhook"
-            await application.run_webhook(
-                listen="0.0.0.0",
-                port=CONFIG.PORT,
-                webhook_url=webhook_url,
-                drop_pending_updates=True
-            )
-        else:
-            await application.run_polling(drop_pending_updates=True)
+        # Use polling for simplicity and reliability
+        await application.run_polling(drop_pending_updates=True)
     except Exception as e:
         logger.error(f"Bot running error: {str(e)}")
     finally:
