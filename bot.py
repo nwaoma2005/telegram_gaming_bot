@@ -1,18 +1,15 @@
 #!/usr/bin/env python3
 import os
 import logging
-import asyncio
 import sqlite3
 import json
-import time
 import threading
-from datetime import datetime, timedelta, timezone
-from typing import Optional, Dict, Any, List
+from datetime import datetime, timezone
+from typing import Optional, Dict
 from contextlib import contextmanager
 from dataclasses import dataclass
 from http.server import HTTPServer, BaseHTTPRequestHandler
 
-import requests
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes
 from dotenv import load_dotenv
@@ -36,7 +33,6 @@ class Config:
     PREMIUM_CHANNEL_LINK: str
     DATABASE_PATH: str = "./premium_bot.db"
     PORT: int = 10000
-    WEBHOOK_URL: str = ""
     ADMIN_USER_ID: str = ""
 
 def load_config() -> Config:
@@ -48,23 +44,24 @@ def load_config() -> Config:
         PREMIUM_CHANNEL_LINK=os.getenv("PREMIUM_CHANNEL_LINK", ""),
         DATABASE_PATH=os.getenv("DATABASE_PATH", "./premium_bot.db"),
         PORT=int(os.getenv("PORT", 10000)),
-        WEBHOOK_URL=os.getenv("WEBHOOK_URL", "https://webhook.site/unique-id"),
         ADMIN_USER_ID=os.getenv("ADMIN_USER_ID", "")
     )
     
-    required_fields = ['BOT_TOKEN', 'FLUTTERWAVE_SECRET_KEY', 'FLUTTERWAVE_PUBLIC_KEY', 
-                      'PREMIUM_CHANNEL_ID', 'PREMIUM_CHANNEL_LINK']
-    
-    missing_fields = [field for field in required_fields if not getattr(config, field)]
-    if missing_fields:
-        raise ValueError(f"Missing required environment variables: {', '.join(missing_fields)}")
+    # Only validate BOT_TOKEN as essential
+    if not config.BOT_TOKEN:
+        raise ValueError("BOT_TOKEN is required")
     
     return config
 
 # Load config
-CONFIG = load_config()
+try:
+    CONFIG = load_config()
+    logger.info("Configuration loaded successfully")
+except ValueError as e:
+    logger.error(f"Configuration error: {e}")
+    exit(1)
 
-# Subscription plans (amounts in kobo - 100 kobo = 1 NGN)
+# Subscription plans
 PLANS = {
     "daily": {"name": "Daily Plan", "amount": 100, "duration_days": 1},
     "weekly": {"name": "Weekly Plan", "amount": 500, "duration_days": 7},
@@ -82,7 +79,6 @@ class DatabaseManager:
         conn = None
         try:
             conn = sqlite3.connect(self.db_path, timeout=30.0)
-            conn.execute("PRAGMA foreign_keys = ON")
             yield conn
         except Exception as e:
             if conn:
@@ -106,22 +102,7 @@ class DatabaseManager:
                         subscription_start TEXT,
                         subscription_end TEXT,
                         is_premium INTEGER DEFAULT 0,
-                        created_at TEXT DEFAULT CURRENT_TIMESTAMP,
-                        updated_at TEXT DEFAULT CURRENT_TIMESTAMP
-                    )
-                ''')
-                
-                cursor.execute('''
-                    CREATE TABLE IF NOT EXISTS payments (
-                        id INTEGER PRIMARY KEY AUTOINCREMENT,
-                        user_id INTEGER,
-                        transaction_ref TEXT UNIQUE,
-                        amount REAL,
-                        plan_type TEXT,
-                        status TEXT DEFAULT 'pending',
-                        created_at TEXT DEFAULT CURRENT_TIMESTAMP,
-                        updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
-                        FOREIGN KEY (user_id) REFERENCES users (user_id)
+                        created_at TEXT DEFAULT CURRENT_TIMESTAMP
                     )
                 ''')
                 
@@ -137,10 +118,11 @@ class DatabaseManager:
             with self.get_connection() as conn:
                 cursor = conn.cursor()
                 cursor.execute('''
-                    INSERT OR REPLACE INTO users (user_id, username, first_name, updated_at)
-                    VALUES (?, ?, ?, ?)
-                ''', (user_id, username, first_name, datetime.now(timezone.utc).isoformat()))
+                    INSERT OR REPLACE INTO users (user_id, username, first_name)
+                    VALUES (?, ?, ?)
+                ''', (user_id, username or "", first_name or ""))
                 conn.commit()
+                logger.info(f"User {user_id} added/updated")
                 
         except Exception as e:
             logger.error(f"Error adding user {user_id}: {str(e)}")
@@ -154,7 +136,7 @@ class DatabaseManager:
                 
                 if row:
                     columns = ['user_id', 'username', 'first_name', 'subscription_plan', 
-                              'subscription_start', 'subscription_end', 'is_premium', 'created_at', 'updated_at']
+                              'subscription_start', 'subscription_end', 'is_premium', 'created_at']
                     return dict(zip(columns, row))
                 return None
                 
@@ -167,31 +149,33 @@ class PremiumBot:
         self.config = config
         self.db = DatabaseManager(config.DATABASE_PATH)
     
-    async def start(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+    async def start_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         user = update.effective_user
         
-        try:
-            self.db.add_user(user.id, user.username, user.first_name)
-        except Exception as e:
-            logger.error(f"Error adding user {user.id}: {str(e)}")
+        # Add user to database
+        self.db.add_user(user.id, user.username, user.first_name)
         
-        welcome_message = f"""
-🎮 **Welcome to Premium Gaming Bot!**
+        welcome_text = f"""🎮 Welcome to Premium Gaming Bot!
 
-Hello {user.first_name}! 👋
+Hello {user.first_name}! 
 
-I'm your gaming companion bot, designed to help you access premium gaming resources and exclusive content.
+I'm your gaming companion bot for premium gaming resources and exclusive content.
 
-**What I offer:**
-🆓 **Free Channel**: Daily gaming tips and basic resources
-💎 **Premium Channel**: Exclusive content including:
+What I offer:
+🆓 Free Channel: Daily gaming tips and basic resources
+💎 Premium Channel: Exclusive content including:
    • Advanced gaming strategies
    • Early access to new games
    • Premium game guides
    • VIP community access
 
-Ready to upgrade your gaming experience?
-        """
+Premium Benefits:
+✨ High-accuracy gaming predictions
+🎯 Exclusive insider tips
+🏆 Priority customer support
+📊 Detailed analytics and statistics
+
+Ready to upgrade your gaming experience?"""
         
         keyboard = [
             [InlineKeyboardButton("🚀 Upgrade to Premium", callback_data="upgrade")],
@@ -200,24 +184,22 @@ Ready to upgrade your gaming experience?
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
         
-        await update.message.reply_text(welcome_message, reply_markup=reply_markup, parse_mode='Markdown')
+        await update.message.reply_text(welcome_text, reply_markup=reply_markup)
     
     async def upgrade_menu(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         query = update.callback_query
         await query.answer()
         
-        upgrade_message = """
-💎 **Choose Your Premium Plan**
+        upgrade_text = """💎 Choose Your Premium Plan
 
 Select the plan that best fits your gaming needs:
 
-📊 **All plans include:**
+All plans include:
 • Access to premium gaming channel
 • Exclusive gaming strategies
 • Priority support
 • Advanced analytics
-• VIP community access
-        """
+• VIP community access"""
         
         keyboard = []
         for plan_id, plan_info in PLANS.items():
@@ -232,7 +214,7 @@ Select the plan that best fits your gaming needs:
         keyboard.append([InlineKeyboardButton("⬅️ Back to Menu", callback_data="back_to_menu")])
         reply_markup = InlineKeyboardMarkup(keyboard)
         
-        await query.edit_message_text(upgrade_message, reply_markup=reply_markup, parse_mode='Markdown')
+        await query.edit_message_text(upgrade_text, reply_markup=reply_markup)
     
     async def process_plan_selection(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         query = update.callback_query
@@ -246,17 +228,13 @@ Select the plan that best fits your gaming needs:
             return
         
         price_naira = plan_info['amount'] / 100
-        payment_message = f"""
-💳 **Payment Details**
+        payment_text = f"""💳 Payment Details
 
-📦 **Plan**: {plan_info['name']}
-💰 **Amount**: ₦{price_naira:.0f}
-⏱️ **Duration**: {plan_info['duration_days']} days
+📦 Plan: {plan_info['name']}
+💰 Amount: ₦{price_naira:.0f}
+⏱️ Duration: {plan_info['duration_days']} days
 
-🔗 **Payment Link Coming Soon!**
-
-For now, please contact support to complete your payment.
-        """
+Payment system is being set up. For now, please contact support to complete your payment and get instant access to premium features."""
         
         keyboard = [
             [InlineKeyboardButton("📞 Contact Support", callback_data="support")],
@@ -264,18 +242,17 @@ For now, please contact support to complete your payment.
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
         
-        await query.edit_message_text(payment_message, reply_markup=reply_markup, parse_mode='Markdown')
+        await query.edit_message_text(payment_text, reply_markup=reply_markup)
     
     async def learn_more(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         query = update.callback_query
         await query.answer()
         
-        info_message = """
-📚 **About Premium Gaming Bot**
+        info_text = """📚 About Premium Gaming Bot
 
-🎯 **Our Mission**: To provide gamers with the most accurate and valuable gaming insights.
+🎯 Our Mission: To provide gamers with the most accurate and valuable gaming insights.
 
-💎 **Premium Features**:
+💎 Premium Features:
 • 90%+ accuracy rate on predictions
 • Daily exclusive gaming tips
 • Advanced strategy guides
@@ -283,12 +260,11 @@ For now, please contact support to complete your payment.
 • Priority customer support
 • Weekly bonus content
 
-📊 **Success Rate**: Our premium members report 3x better gaming performance
+📊 Success Rate: Our premium members report 3x better gaming performance
 
-🔒 **Secure**: All payments processed through trusted payment gateway
+🔒 Secure: All payments processed through trusted payment gateway
 
-💪 **Community**: Join 1000+ satisfied premium members
-        """
+💪 Community: Join 1000+ satisfied premium members"""
         
         keyboard = [
             [InlineKeyboardButton("🚀 Upgrade Now", callback_data="upgrade")],
@@ -296,36 +272,34 @@ For now, please contact support to complete your payment.
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
         
-        await query.edit_message_text(info_message, reply_markup=reply_markup, parse_mode='Markdown')
+        await query.edit_message_text(info_text, reply_markup=reply_markup)
     
     async def support(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         query = update.callback_query
         await query.answer()
         
-        support_message = """
-📞 **Customer Support**
+        support_text = """📞 Customer Support
 
 Need help? We're here for you!
 
-🕐 **Support Hours**: 24/7
-📧 **Email**: support@yourgamingbot.com
-💬 **Telegram**: @your_support_bot
+🕐 Support Hours: 24/7
+📧 Email: support@yourgamingbot.com
+💬 Telegram: @your_support_bot
 
-**Common Issues:**
+Common Issues:
 • Payment problems
 • Channel access issues
 • Subscription questions
 • Technical support
 
-We typically respond within 1 hour! 🚀
-        """
+We typically respond within 1 hour!"""
         
         keyboard = [[InlineKeyboardButton("⬅️ Back to Menu", callback_data="back_to_menu")]]
         reply_markup = InlineKeyboardMarkup(keyboard)
         
-        await query.edit_message_text(support_message, reply_markup=reply_markup, parse_mode='Markdown')
+        await query.edit_message_text(support_text, reply_markup=reply_markup)
     
-    async def button_handler(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+    async def button_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         query = update.callback_query
         
         try:
@@ -338,7 +312,27 @@ We typically respond within 1 hour! 🚀
             elif query.data == "support":
                 await self.support(update, context)
             elif query.data == "back_to_menu":
-                await self.start(update, context)
+                # Recreate start message for callback
+                user = query.from_user
+                welcome_text = f"""🎮 Welcome to Premium Gaming Bot!
+
+Hello {user.first_name}! 
+
+I'm your gaming companion bot for premium gaming resources and exclusive content.
+
+What I offer:
+🆓 Free Channel: Daily gaming tips and basic resources
+💎 Premium Channel: Exclusive content
+
+Ready to upgrade your gaming experience?"""
+                
+                keyboard = [
+                    [InlineKeyboardButton("🚀 Upgrade to Premium", callback_data="upgrade")],
+                    [InlineKeyboardButton("ℹ️ Learn More", callback_data="learn_more")],
+                    [InlineKeyboardButton("📞 Support", callback_data="support")]
+                ]
+                reply_markup = InlineKeyboardMarkup(keyboard)
+                await query.edit_message_text(welcome_text, reply_markup=reply_markup)
             else:
                 await query.answer("❌ Unknown action.")
         except Exception as e:
@@ -348,22 +342,16 @@ We typically respond within 1 hour! 🚀
 class HealthHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         try:
-            if self.path == '/health':
-                health_status = {
-                    "status": "healthy",
-                    "timestamp": datetime.now(timezone.utc).isoformat(),
-                    "service": "Premium Gaming Bot"
-                }
-                
-                self.send_response(200)
-                self.send_header('Content-type', 'application/json')
-                self.end_headers()
-                self.wfile.write(json.dumps(health_status).encode())
-            else:
-                self.send_response(200)
-                self.send_header('Content-type', 'text/plain')
-                self.end_headers()
-                self.wfile.write(b'Premium Gaming Bot is running!')
+            health_status = {
+                "status": "healthy",
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "service": "Premium Gaming Bot"
+            }
+            
+            self.send_response(200)
+            self.send_header('Content-type', 'application/json')
+            self.end_headers()
+            self.wfile.write(json.dumps(health_status).encode())
         except Exception as e:
             logger.error(f"Health check error: {str(e)}")
             self.send_response(500)
@@ -380,28 +368,22 @@ def run_health_server():
     except Exception as e:
         logger.error(f"Health server error: {str(e)}")
 
-async def main():
+def main():
     logger.info("Starting Premium Gaming Bot...")
     
-    try:
-        bot = PremiumBot(CONFIG)
-        logger.info("Bot initialized successfully")
-    except Exception as e:
-        logger.error(f"Failed to initialize bot: {str(e)}")
-        return
+    # Initialize bot
+    bot = PremiumBot(CONFIG)
+    logger.info("Bot initialized successfully")
     
-    try:
-        application = Application.builder().token(CONFIG.BOT_TOKEN).build()
-        logger.info("Telegram application created successfully")
-    except Exception as e:
-        logger.error(f"Failed to create Telegram application: {str(e)}")
-        return
+    # Build application
+    application = Application.builder().token(CONFIG.BOT_TOKEN).build()
+    logger.info("Telegram application created successfully")
     
     # Add handlers
-    application.add_handler(CommandHandler("start", bot.start))
-    application.add_handler(CallbackQueryHandler(bot.button_handler))
+    application.add_handler(CommandHandler("start", bot.start_command))
+    application.add_handler(CallbackQueryHandler(bot.button_callback))
     
-    # Start health check server
+    # Start health check server in background
     health_thread = threading.Thread(target=run_health_server, daemon=True)
     health_thread.start()
     
@@ -409,17 +391,14 @@ async def main():
     print("Premium Gaming Bot is running...")
     print(f"Health check server running on port {CONFIG.PORT}")
     
-    try:
-        await application.run_polling(drop_pending_updates=True)
-    except Exception as e:
-        logger.error(f"Bot running error: {str(e)}")
-    finally:
-        logger.info("Bot stopped")
+    # Run bot with polling - this handles the event loop properly
+    application.run_polling(drop_pending_updates=True)
 
 if __name__ == '__main__':
     try:
-        asyncio.run(main())
+        main()
     except KeyboardInterrupt:
         logger.info("Bot stopped by user")
     except Exception as e:
         logger.error(f"Fatal error: {str(e)}")
+        print(f"Fatal error: {str(e)}")
