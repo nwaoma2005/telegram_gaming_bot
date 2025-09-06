@@ -93,8 +93,9 @@ class DatabaseManager:
         """Context manager for database connections"""
         conn = None
         try:
-            conn = sqlite3.connect(self.db_path)
+            conn = sqlite3.connect(self.db_path, timeout=30.0)
             conn.execute("PRAGMA foreign_keys = ON")
+            conn.execute("PRAGMA journal_mode = WAL")
             yield conn
         except Exception as e:
             if conn:
@@ -143,6 +144,7 @@ class DatabaseManager:
                 cursor.execute('CREATE INDEX IF NOT EXISTS idx_users_subscription_end ON users (subscription_end)')
                 cursor.execute('CREATE INDEX IF NOT EXISTS idx_payments_user_id ON payments (user_id)')
                 cursor.execute('CREATE INDEX IF NOT EXISTS idx_payments_status ON payments (status)')
+                cursor.execute('CREATE INDEX IF NOT EXISTS idx_payments_tx_ref ON payments (transaction_ref)')
                 
                 conn.commit()
                 logger.info("Database initialized successfully")
@@ -166,10 +168,22 @@ class DatabaseManager:
             with self.get_connection() as conn:
                 cursor = conn.cursor()
                 
-                cursor.execute('''
-                    INSERT OR REPLACE INTO users (user_id, username, first_name, updated_at)
-                    VALUES (?, ?, ?, ?)
-                ''', (user_id, username, first_name, datetime.now(timezone.utc).isoformat()))
+                # Check if user exists
+                cursor.execute('SELECT user_id FROM users WHERE user_id = ?', (user_id,))
+                exists = cursor.fetchone()
+                
+                if exists:
+                    # Update existing user
+                    cursor.execute('''
+                        UPDATE users SET username = ?, first_name = ?, updated_at = ?
+                        WHERE user_id = ?
+                    ''', (username, first_name, datetime.now(timezone.utc).isoformat(), user_id))
+                else:
+                    # Insert new user
+                    cursor.execute('''
+                        INSERT INTO users (user_id, username, first_name, updated_at)
+                        VALUES (?, ?, ?, ?)
+                    ''', (user_id, username, first_name, datetime.now(timezone.utc).isoformat()))
                 
                 conn.commit()
                 logger.info(f"User {user_id} added/updated successfully")
@@ -427,6 +441,7 @@ class PremiumBot:
         self.db = DatabaseManager(config.DATABASE_PATH)
         self.payment = FlutterwavePayment(config.FLUTTERWAVE_SECRET_KEY, config.FLUTTERWAVE_PUBLIC_KEY)
         self.rate_limiter = RateLimiter()
+        self.application = None  # Will be set in main()
     
     async def start(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Start command handler"""
@@ -904,7 +919,7 @@ We typically respond within 1 hour! 🚀
             logger.error(f"Error getting admin stats: {str(e)}")
             await update.message.reply_text("❌ Error retrieving statistics.")
     
-    async def check_expired_subscriptions(self, context: ContextTypes.DEFAULT_TYPE):
+    async def check_expired_subscriptions(self):
         """Background task to check and handle expired subscriptions"""
         try:
             expired_users = self.db.get_expired_users()
@@ -913,28 +928,29 @@ We typically respond within 1 hour! 🚀
                 try:
                     self.db.expire_user_subscription(user_id)
                     
-                    await context.bot.send_message(
-                        chat_id=user_id,
-                        text="""
+                    if self.application:
+                        await self.application.bot.send_message(
+                            chat_id=user_id,
+                            text="""
 ⏰ **Subscription Expired**
 
 Your premium subscription has expired. You no longer have access to the premium channel.
 
 **Renew Now** to continue enjoying premium features!
-                        """,
-                        reply_markup=InlineKeyboardMarkup([
-                            [InlineKeyboardButton("🚀 Renew Subscription", callback_data="upgrade")]
-                        ]),
-                        parse_mode='Markdown'
-                    )
-                    
-                    # Remove user from premium channel
-                    if CONFIG.PREMIUM_CHANNEL_ID:
-                        try:
-                            await context.bot.ban_chat_member(CONFIG.PREMIUM_CHANNEL_ID, user_id)
-                            logger.info(f"Removed expired user {user_id} from premium channel")
-                        except Exception as e:
-                            logger.error(f"Failed to remove user {user_id} from premium channel: {str(e)}")
+                            """,
+                            reply_markup=InlineKeyboardMarkup([
+                                [InlineKeyboardButton("🚀 Renew Subscription", callback_data="upgrade")]
+                            ]),
+                            parse_mode='Markdown'
+                        )
+                        
+                        # Remove user from premium channel
+                        if CONFIG.PREMIUM_CHANNEL_ID:
+                            try:
+                                await self.application.bot.ban_chat_member(CONFIG.PREMIUM_CHANNEL_ID, user_id)
+                                logger.info(f"Removed expired user {user_id} from premium channel")
+                            except Exception as e:
+                                logger.error(f"Failed to remove user {user_id} from premium channel: {str(e)}")
                     
                 except Exception as e:
                     logger.error(f"Error processing expired user {user_id}: {str(e)}")
@@ -1005,8 +1021,9 @@ async def main():
         return
     
     try:
-        # Build application without job queue to avoid errors
+        # Build application
         application = Application.builder().token(CONFIG.BOT_TOKEN).build()
+        bot.application = application  # Set reference for background tasks
         logger.info("Telegram application created successfully")
     except Exception as e:
         logger.error(f"Failed to create Telegram application: {str(e)}")
@@ -1022,6 +1039,19 @@ async def main():
     # Start health check server in background thread
     health_thread = threading.Thread(target=run_health_server, daemon=True)
     health_thread.start()
+    
+    # Create background task for checking expired subscriptions
+    async def subscription_checker():
+        while True:
+            try:
+                await bot.check_expired_subscriptions()
+                await asyncio.sleep(3600)  # Check every hour
+            except Exception as e:
+                logger.error(f"Subscription checker error: {str(e)}")
+                await asyncio.sleep(300)  # Wait 5 minutes on error
+    
+    # Start subscription checker
+    asyncio.create_task(subscription_checker())
     
     logger.info("Premium Gaming Bot started successfully!")
     print("Premium Gaming Bot is running...")
