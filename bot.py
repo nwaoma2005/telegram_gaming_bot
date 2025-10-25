@@ -347,22 +347,41 @@ class DatabaseManager:
         except Exception as e:
             logger.error(f"Error updating user stats: {str(e)}")
 
+"""
+REPLACE the FlutterwavePayment class in your bot with this improved version
+This has better error handling and debugging
+"""
+
 class FlutterwavePayment:
     def __init__(self, secret_key: str, public_key: str):
         self.base_url = "https://api.flutterwave.com/v3"
         self.secret_key = secret_key
         self.public_key = public_key
+        
+        # Validate keys
+        if not secret_key or not public_key:
+            logger.error("Flutterwave keys are missing!")
+        elif secret_key.startswith("FLWSECK_TEST"):
+            logger.info("Using Flutterwave TEST mode")
+        elif secret_key.startswith("FLWSECK-"):
+            logger.info("Using Flutterwave LIVE mode")
+        else:
+            logger.warning("Flutterwave key format not recognized")
     
     def create_payment_link(self, user_id: int, amount: float) -> Dict[str, Any]:
         """Create payment link with Flutterwave"""
         try:
             tx_ref = f"virtuals_bet_{user_id}_{uuid.uuid4().hex[:8]}_{int(time.time())}"
             
+            # Convert amount from kobo to naira
+            amount_naira = amount / 100
+            
             payload = {
                 "tx_ref": tx_ref,
-                "amount": amount / 100,  # Convert from kobo to naira
+                "amount": str(amount_naira),  # Convert to string for better compatibility
                 "currency": "NGN",
                 "redirect_url": CONFIG.WEBHOOK_URL,
+                "payment_options": "card,banktransfer,ussd",  # Enable multiple payment methods
                 "meta": {
                     "user_id": str(user_id),
                     "subscription_type": "monthly"
@@ -374,7 +393,7 @@ class FlutterwavePayment:
                 },
                 "customizations": {
                     "title": "Virtuals Betting Premium",
-                    "description": "30-Day Premium Betting Predictions Access",
+                    "description": f"30-Day Premium Subscription - ₦{amount_naira:.0f}",
                     "logo": ""
                 }
             }
@@ -384,6 +403,9 @@ class FlutterwavePayment:
                 "Content-Type": "application/json"
             }
             
+            logger.info(f"Creating payment link for user {user_id}, amount: ₦{amount_naira}")
+            logger.debug(f"Request payload: {json.dumps(payload, indent=2)}")
+            
             response = requests.post(
                 f"{self.base_url}/payments",
                 json=payload,
@@ -391,25 +413,95 @@ class FlutterwavePayment:
                 timeout=30
             )
             
-            response.raise_for_status()
-            data = response.json()
+            logger.info(f"Flutterwave response status: {response.status_code}")
             
+            # Log response for debugging
+            try:
+                response_data = response.json()
+                logger.debug(f"Flutterwave response: {json.dumps(response_data, indent=2)}")
+            except:
+                logger.error(f"Failed to parse response: {response.text}")
+                return {
+                    "status": "error",
+                    "message": "Invalid response from payment service"
+                }
+            
+            response.raise_for_status()
+            
+            data = response.json()
             if data.get('status') == 'success':
+                logger.info(f"Payment link created successfully for user {user_id}")
                 return {
                     "status": "success",
                     "tx_ref": tx_ref,
                     "link": data["data"]["link"]
                 }
             else:
-                logger.error(f"Flutterwave API error: {data}")
-                return {"status": "error", "message": data.get('message', 'Payment link creation failed')}
+                error_msg = data.get('message', 'Payment link creation failed')
+                logger.error(f"Flutterwave API error: {error_msg}")
+                logger.error(f"Full response: {json.dumps(data, indent=2)}")
+                
+                # Provide more specific error messages
+                if "authentication" in error_msg.lower():
+                    return {
+                        "status": "error",
+                        "message": "Payment configuration error. Please contact admin."
+                    }
+                elif "merchant" in error_msg.lower():
+                    return {
+                        "status": "error",
+                        "message": "Payment service not properly configured. Contact support."
+                    }
+                else:
+                    return {
+                        "status": "error",
+                        "message": f"Payment error: {error_msg}"
+                    }
+                
+        except requests.HTTPError as e:
+            logger.error(f"HTTP error during payment link creation: {str(e)}")
+            logger.error(f"Response: {e.response.text if e.response else 'No response'}")
+            
+            # Parse error response
+            try:
+                error_data = e.response.json()
+                error_message = error_data.get('message', str(e))
+                
+                # Check for specific errors
+                if e.response.status_code == 401:
+                    return {
+                        "status": "error",
+                        "message": "Payment authentication failed. Invalid API keys."
+                    }
+                elif e.response.status_code == 400:
+                    return {
+                        "status": "error",
+                        "message": f"Payment request invalid: {error_message}"
+                    }
+                else:
+                    return {
+                        "status": "error",
+                        "message": f"Payment service error: {error_message}"
+                    }
+            except:
+                return {
+                    "status": "error",
+                    "message": "Payment service temporarily unavailable"
+                }
                 
         except requests.RequestException as e:
             logger.error(f"Payment link creation request error: {str(e)}")
-            return {"status": "error", "message": "Payment service temporarily unavailable"}
+            return {
+                "status": "error",
+                "message": "Cannot connect to payment service. Check internet connection."
+            }
         except Exception as e:
-            logger.error(f"Payment link creation error: {str(e)}")
-            return {"status": "error", "message": "Payment service unavailable"}
+            logger.error(f"Unexpected payment link creation error: {str(e)}")
+            logger.exception("Full traceback:")
+            return {
+                "status": "error",
+                "message": "Payment system error. Please try again later."
+            }
     
     def verify_payment(self, tx_ref: str) -> Dict[str, Any]:
         """Verify payment status with Flutterwave"""
@@ -419,22 +511,44 @@ class FlutterwavePayment:
                 "Content-Type": "application/json"
             }
             
+            logger.info(f"Verifying payment: {tx_ref}")
+            
             response = requests.get(
                 f"{self.base_url}/transactions/verify_by_reference?tx_ref={tx_ref}",
                 headers=headers,
                 timeout=30
             )
             
+            logger.info(f"Verification response status: {response.status_code}")
+            
             response.raise_for_status()
-            return response.json()
+            data = response.json()
+            
+            logger.debug(f"Verification response: {json.dumps(data, indent=2)}")
+            
+            return data
                 
+        except requests.HTTPError as e:
+            logger.error(f"HTTP error during verification: {str(e)}")
+            if e.response:
+                logger.error(f"Response: {e.response.text}")
+            return {
+                "status": "error",
+                "message": "Verification service error"
+            }
         except requests.RequestException as e:
             logger.error(f"Payment verification request error: {str(e)}")
-            return {"status": "error", "message": "Verification service temporarily unavailable"}
+            return {
+                "status": "error",
+                "message": "Cannot connect to verification service"
+            }
         except Exception as e:
             logger.error(f"Payment verification error: {str(e)}")
-            return {"status": "error", "message": "Verification service unavailable"}
-
+            logger.exception("Full traceback:")
+            return {
+                "status": "error",
+                "message": "Verification system error"
+            }
 class GroupManager:
     """Manages automatic adding/removing users from premium group"""
     
