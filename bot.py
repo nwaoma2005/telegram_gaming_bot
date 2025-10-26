@@ -14,8 +14,6 @@ import sys
 import time
 import requests
 import uuid
-import hmac
-import hashlib
 from datetime import datetime, timezone, timedelta
 from typing import Optional, Dict, Any, List
 from contextlib import contextmanager
@@ -86,7 +84,7 @@ except ValueError as e:
 
 BOT_COMMANDS = [
     BotCommand("start", "Start the bot and see welcome menu"),
-    BotCommand("subscribe", "Subscribe to premium predictions (₦100/month)"),
+    BotCommand("subscribe", "Subscribe to premium predictions"),
     BotCommand("status", "Check your subscription status"),
     BotCommand("predictions", "View today's betting predictions"),
     BotCommand("stats", "View your betting statistics"),
@@ -246,10 +244,10 @@ class DatabaseManager:
                      CONFIG.SUBSCRIPTION_AMOUNT / 100, 1 if is_renewal else 0))
                 
                 conn.commit()
-                logger.info(f"Subscription updated for user {user_id} (renewal: {is_renewal})")
+                logger.info(f"Subscription updated for user {user_id}")
                 
         except Exception as e:
-            logger.error(f"Error updating subscription for user {user_id}: {str(e)}")
+            logger.error(f"Error updating subscription: {str(e)}")
             raise
     
     def revoke_subscription(self, user_id: int):
@@ -262,10 +260,9 @@ class DatabaseManager:
                     WHERE user_id = ?
                 ''', (datetime.now(timezone.utc).isoformat(), user_id))
                 conn.commit()
-                logger.info(f"Revoked premium access for user {user_id}")
                 
         except Exception as e:
-            logger.error(f"Error revoking subscription for user {user_id}: {str(e)}")
+            logger.error(f"Error revoking subscription: {str(e)}")
     
     def get_expired_subscriptions(self) -> List[Dict]:
         try:
@@ -472,7 +469,7 @@ class FlutterwavePayment:
         self.secret_key = secret_key
         self.public_key = public_key
     
-    def create_payment_link(self, user_id: int, amount: float, user_email: str = None) -> Dict[str, Any]:
+    def create_payment_link(self, user_id: int, amount: float) -> Dict[str, Any]:
         try:
             tx_ref = f"okvirtuals_{user_id}_{uuid.uuid4().hex[:8]}_{int(time.time())}"
             
@@ -486,7 +483,7 @@ class FlutterwavePayment:
                     "plan": "monthly"
                 },
                 "customer": {
-                    "email": user_email or f"user{user_id}@okvirtuals.com",
+                    "email": f"user{user_id}@okvirtuals.com",
                     "phonenumber": "08000000000",
                     "name": f"User {user_id}"
                 },
@@ -550,7 +547,6 @@ class GroupManager:
     def __init__(self, application: Application):
         self.application = application
         self.channel_id = CONFIG.PREMIUM_CHANNEL_ID
-        self.channel_username = CONFIG.PREMIUM_CHANNEL_USERNAME
     
     async def create_invite_link(self, user_id: int) -> Optional[str]:
         try:
@@ -564,11 +560,8 @@ class GroupManager:
             logger.info(f"Created invite link for user {user_id}")
             return invite.invite_link
             
-        except Forbidden as e:
-            logger.error(f"Bot doesn't have permission to create invite links: {str(e)}")
-            return None
         except Exception as e:
-            logger.error(f"Error creating invite link for user {user_id}: {str(e)}")
+            logger.error(f"Error creating invite link: {str(e)}")
             return None
     
     async def check_membership(self, user_id: int) -> bool:
@@ -585,7 +578,7 @@ class GroupManager:
             ]
             
         except Exception as e:
-            logger.error(f"Error checking membership for user {user_id}: {str(e)}")
+            logger.error(f"Error checking membership: {str(e)}")
             return False
     
     async def remove_user_from_group(self, user_id: int) -> bool:
@@ -599,26 +592,8 @@ class GroupManager:
             logger.info(f"Removed user {user_id} from premium group")
             return True
             
-        except Forbidden as e:
-            logger.error(f"Bot doesn't have permission to remove user: {str(e)}")
-            return False
         except Exception as e:
-            logger.error(f"Error removing user {user_id}: {str(e)}")
-            return False
-    
-    async def unban_user(self, user_id: int) -> bool:
-        try:
-            await self.application.bot.unban_chat_member(
-                chat_id=self.channel_id,
-                user_id=user_id,
-                only_if_banned=True
-            )
-            
-            logger.info(f"Unbanned user {user_id}")
-            return True
-            
-        except Exception as e:
-            logger.error(f"Error unbanning user {user_id}: {str(e)}")
+            logger.error(f"Error removing user: {str(e)}")
             return False
 
 class SubscriptionMonitor:
@@ -639,7 +614,6 @@ class SubscriptionMonitor:
         self.running = False
         if self.thread:
             self.thread.join(timeout=5)
-        logger.info("Subscription monitor stopped")
     
     def _monitor_loop(self):
         while self.running:
@@ -647,7 +621,6 @@ class SubscriptionMonitor:
                 self._check_expired_subscriptions()
                 self._send_expiry_reminders()
                 time.sleep(1800)
-                
             except Exception as e:
                 logger.error(f"Error in subscription monitor: {str(e)}")
                 time.sleep(300)
@@ -661,7 +634,6 @@ class SubscriptionMonitor:
                 
                 for user in expired_users:
                     user_id = user['user_id']
-                    
                     self.db.revoke_subscription(user_id)
                     
                     import asyncio
@@ -671,16 +643,12 @@ class SubscriptionMonitor:
                         loop.run_until_complete(
                             self.group_manager.remove_user_from_group(user_id)
                         )
-                        
                         loop.run_until_complete(
                             self._send_expiry_notification(user_id)
                         )
-                        
                         loop.close()
-                        logger.info(f"Processed expired subscription for user {user_id}")
-                        
                     except Exception as e:
-                        logger.error(f"Failed to process expiry for user {user_id}: {str(e)}")
+                        logger.error(f"Failed to process expiry: {str(e)}")
                     
         except Exception as e:
             logger.error(f"Error checking expired subscriptions: {str(e)}")
@@ -690,8 +658,6 @@ class SubscriptionMonitor:
             users_to_remind = self.db.get_users_needing_reminder()
             
             if users_to_remind:
-                logger.info(f"Sending reminders to {len(users_to_remind)} users")
-                
                 for user in users_to_remind:
                     user_id = user['user_id']
                     days_remaining = user['days_remaining']
@@ -704,11 +670,9 @@ class SubscriptionMonitor:
                             self._send_reminder_notification(user_id, days_remaining)
                         )
                         loop.close()
-                        
                         self.db.mark_reminder_sent(user_id)
-                        
                     except Exception as e:
-                        logger.error(f"Failed to send reminder to user {user_id}: {str(e)}")
+                        logger.error(f"Failed to send reminder: {str(e)}")
                         
         except Exception as e:
             logger.error(f"Error sending reminders: {str(e)}")
@@ -721,36 +685,25 @@ class SubscriptionMonitor:
 Your premium subscription has expired.
 
 💎 *Renew Now:*
-Only ₦{CONFIG.SUBSCRIPTION_AMOUNT / 100:.0f} for 30 more days of premium access!
+Only ₦{CONFIG.SUBSCRIPTION_AMOUNT / 100:.0f} for 30 more days!
 
-Use /subscribe to renew your subscription."""
+Use /subscribe to renew."""
 
                 await bot_application.bot.send_message(
                     chat_id=user_id,
                     text=message,
-                    parse_mode=ParseMode.MARKDOWN,
-                    reply_markup=InlineKeyboardMarkup([
-                        [InlineKeyboardButton("💎 Renew Subscription", callback_data="subscribe")]
-                    ])
+                    parse_mode=ParseMode.MARKDOWN
                 )
                 
-                self.db.log_notification(user_id, "expiry", "Subscription expired")
-                
         except Exception as e:
-            logger.error(f"Error sending expiry notification to user {user_id}: {str(e)}")
+            logger.error(f"Error sending expiry notification: {str(e)}")
     
     async def _send_reminder_notification(self, user_id: int, days_remaining: int):
         try:
             if bot_application:
-                emoji = "⚠️" if days_remaining <= 3 else "🔔"
-                message = f"""{emoji} *Subscription Expiring Soon*
+                message = f"""🔔 *Subscription Expiring Soon*
 
 Your premium subscription expires in *{days_remaining} day{"s" if days_remaining > 1 else ""}*!
-
-Don't lose access to:
-✅ Daily Sure Bet Predictions
-✅ VIP Group Access
-✅ Expert Analysis
 
 💎 *Renew Now:*
 Only ₦{CONFIG.SUBSCRIPTION_AMOUNT / 100:.0f} for 30 more days!
@@ -760,16 +713,11 @@ Use /subscribe to renew."""
                 await bot_application.bot.send_message(
                     chat_id=user_id,
                     text=message,
-                    parse_mode=ParseMode.MARKDOWN,
-                    reply_markup=InlineKeyboardMarkup([
-                        [InlineKeyboardButton("💎 Renew Now", callback_data="subscribe")]
-                    ])
+                    parse_mode=ParseMode.MARKDOWN
                 )
                 
-                self.db.log_notification(user_id, "reminder", f"Reminder sent: {days_remaining} days")
-                
         except Exception as e:
-            logger.error(f"Error sending reminder to user {user_id}: {str(e)}")
+            logger.error(f"Error sending reminder: {str(e)}")
 
 class RateLimiter:
     def __init__(self):
@@ -791,7 +739,7 @@ class RateLimiter:
         
         return False
 
-# Continuing in next message due to length...class OKVirtualsBot:
+class OKVirtualsBot:
     def __init__(self, config: Config):
         self.config = config
         self.db = DatabaseManager(config.DATABASE_PATH)
@@ -821,33 +769,18 @@ class RateLimiter:
 Hello {user.first_name}! 👋
 
 🔥 *What We Offer:*
-✅ Daily Sure Bet Predictions for Virtuals
-✅ 90%+ Accuracy Rate on Virtual Games
-✅ Expert Analysis & Strategies
-✅ Real-time Betting Tips
-✅ Exclusive VIP Community
+✅ Daily Sure Bet Predictions
+✅ 90%+ Accuracy Rate
+✅ Expert Analysis
+✅ Real-time Tips
+✅ VIP Community
 
-💎 *Premium Benefits:*
-🎲 Virtual Football Predictions
-🏀 Virtual Basketball Tips
-🏇 Virtual Horse Racing Insights
-⚡ Instant Win Strategies
-📊 Detailed Analytics & Stats
-🔔 Real-time Notifications
-💬 24/7 Premium Support
-
-💰 *Subscribe Now:*
-Only ₦{self.config.SUBSCRIPTION_AMOUNT / 100:.0f} for 30 Days of Premium Access!
-
-Transform your betting game today! 🚀"""
+💰 *Subscribe:* ₦{self.config.SUBSCRIPTION_AMOUNT / 100:.0f}/month"""
         
         keyboard = [
-            [InlineKeyboardButton("💎 Subscribe (₦100/month)", callback_data="subscribe")],
-            [InlineKeyboardButton("📊 Check Status", callback_data="status"),
-             InlineKeyboardButton("🎯 Today's Tips", callback_data="predictions")],
-            [InlineKeyboardButton("📈 My Stats", callback_data="stats"),
-             InlineKeyboardButton("💬 Support", callback_data="support")],
-            [InlineKeyboardButton("ℹ️ Learn More", callback_data="learn_more")]
+            [InlineKeyboardButton("💎 Subscribe", callback_data="subscribe")],
+            [InlineKeyboardButton("📊 Status", callback_data="status"),
+             InlineKeyboardButton("🎯 Tips", callback_data="predictions")],
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
         
@@ -861,57 +794,24 @@ Transform your betting game today! 🚀"""
         user = update.effective_user
         self.db.add_user(user.id, user.username, user.first_name)
         
-        user_data = self.db.get_user(user.id)
-        
-        if user_data and user_data['is_premium']:
-            try:
-                end_date = datetime.fromisoformat(user_data['subscription_end'])
-                current_time = datetime.now(timezone.utc)
-                
-                if end_date > current_time:
-                    days_remaining = (end_date - current_time).days
-                    await update.message.reply_text(
-                        f"✅ *You Already Have Active Subscription!*\n\n"
-                        f"📅 Expires: {end_date.strftime('%B %d, %Y at %H:%M UTC')}\n"
-                        f"⏰ Days Remaining: {days_remaining} days\n"
-                        f"💎 Status: Premium Member\n\n"
-                        f"Use /premium to access the channel!",
-                        parse_mode=ParseMode.MARKDOWN
-                    )
-                    return
-            except Exception as e:
-                logger.error(f"Error parsing subscription date: {str(e)}")
-        
         price_naira = self.config.SUBSCRIPTION_AMOUNT / 100
         subscribe_text = f"""💎 *Premium Subscription*
 
-🎯 *OK Virtuals Betting Predictions*
-30 Days of Expert Predictions
-
-💰 *Price:* ₦{price_naira:.0f} (One-time Payment)
-⏰ *Duration:* {self.config.SUBSCRIPTION_DAYS} Days
-📊 *Success Rate:* 90%+ Accuracy
+💰 *Price:* ₦{price_naira:.0f}
+⏰ *Duration:* 30 Days
+📊 *Success Rate:* 90%+
 
 ✨ *What You Get:*
-✅ Daily Sure Bet Predictions
-✅ Virtual Football Tips
-✅ Virtual Basketball Strategies
-✅ Horse Racing Insights
-✅ Instant Win Techniques
-✅ VIP Telegram Group Access
-✅ 24/7 Premium Support
-✅ Real-time Updates
-✅ Betting Analytics
+✅ Daily Predictions
+✅ VIP Group Access
+✅ Expert Analysis
+✅ Real-time Tips
 
-🔒 *Secure Payment via Flutterwave*
-💳 Pay with Card, Bank Transfer, or USSD
-
-Click below to subscribe now!"""
+Click below to subscribe!"""
         
         keyboard = [
             [InlineKeyboardButton("💳 Pay ₦100 Now", callback_data="process_payment")],
-            [InlineKeyboardButton("📊 View Sample Predictions", callback_data="predictions")],
-            [InlineKeyboardButton("🔙 Back to Menu", callback_data="back_to_menu")]
+            [InlineKeyboardButton("🔙 Back", callback_data="back_to_menu")]
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
         
@@ -930,71 +830,36 @@ Click below to subscribe now!"""
         if user_data and user_data['is_premium']:
             try:
                 end_date = datetime.fromisoformat(user_data['subscription_end'])
-                start_date = datetime.fromisoformat(user_data['subscription_start'])
                 current_time = datetime.now(timezone.utc)
                 
                 if end_date > current_time:
                     days_remaining = (end_date - current_time).days
-                    hours_remaining = int((end_date - current_time).total_seconds() / 3600) % 24
                     
-                    is_member = await self.group_manager.check_membership(user.id)
-                    membership_status = "✅ Active in Channel" if is_member else "⚠️ Not in Channel Yet"
-                    
-                    status_text = f"""✅ *Premium Subscription Active*
+                    status_text = f"""✅ *Premium Active*
 
 👤 User: {user.first_name}
-💎 Status: Premium Member
-📅 Started: {start_date.strftime('%B %d, %Y')}
-⏰ Expires: {end_date.strftime('%B %d, %Y at %H:%M UTC')}
-📊 Time Remaining: {days_remaining} days, {hours_remaining} hours
-🔗 Channel Status: {membership_status}
-
-📈 *Your Stats:*
-🎯 Predictions Viewed: {user_data.get('total_predictions_viewed', 0)}
-🎲 Total Bets: {user_data.get('total_bets', 0)}
-
-💡 *Tip:* Renew early to avoid losing access!"""
+📅 Expires: {end_date.strftime('%B %d, %Y')}
+⏰ Days Left: {days_remaining} days"""
                     
                     keyboard = [
-                        [InlineKeyboardButton("🔗 Access Premium Channel", callback_data="premium")],
-                        [InlineKeyboardButton("🎯 View Predictions", callback_data="predictions")]
+                        [InlineKeyboardButton("🔗 Access Channel", callback_data="premium")],
+                        [InlineKeyboardButton("🎯 Predictions", callback_data="predictions")]
                     ]
                 else:
-                    status_text = f"""⚠️ *Premium Subscription Expired*
-
-👤 User: {user.first_name}
-❌ Status: Expired
-📅 Expired: {end_date.strftime('%B %d, %Y')}
-
-💰 Renew now for ₦{self.config.SUBSCRIPTION_AMOUNT / 100:.0f} to regain access!"""
-                    
-                    keyboard = [
-                        [InlineKeyboardButton("💎 Renew Subscription", callback_data="subscribe")]
-                    ]
-            except Exception as e:
-                logger.error(f"Error parsing subscription dates: {str(e)}")
-                status_text = "❌ Error retrieving subscription status. Please contact support."
+                    status_text = "⚠️ *Subscription Expired*\n\nRenew to regain access!"
+                    keyboard = [[InlineKeyboardButton("💎 Renew", callback_data="subscribe")]]
+            except:
+                status_text = "❌ Error retrieving status"
                 keyboard = []
         else:
             status_text = f"""📊 *Subscription Status*
 
 👤 User: {user.first_name}
 ❌ Status: Free User
-💎 Premium: Not Active
 
-🎯 *Upgrade to Premium for:*
-✅ Daily Sure Bet Predictions
-✅ 90%+ Accuracy Rate
-✅ VIP Group Access
-✅ Expert Analysis
-✅ Real-time Tips
-
-💰 Only ₦{self.config.SUBSCRIPTION_AMOUNT / 100:.0f} for 30 days!"""
+💰 Subscribe: ₦{self.config.SUBSCRIPTION_AMOUNT / 100:.0f}/month"""
             
-            keyboard = [
-                [InlineKeyboardButton("💎 Subscribe Now", callback_data="subscribe")],
-                [InlineKeyboardButton("💬 Support", callback_data="support")]
-            ]
+            keyboard = [[InlineKeyboardButton("💎 Subscribe", callback_data="subscribe")]]
         
         reply_markup = InlineKeyboardMarkup(keyboard)
         
@@ -1017,42 +882,21 @@ Click below to subscribe now!"""
                 if end_date > datetime.now(timezone.utc):
                     self.db.update_user_stats(user.id, predictions_viewed=1)
                     
-                    predictions_text = f"""🎯 *TODAY'S PREMIUM PREDICTIONS*
+                    predictions_text = f"""🎯 *TODAY'S PREDICTIONS*
 
-📅 Date: {datetime.now().strftime('%B %d, %Y')}
+📅 {datetime.now().strftime('%B %d, %Y')}
 
 ⚽ *VIRTUAL FOOTBALL*
-🎲 Match: Virtual Premier League
 📊 Prediction: Over 2.5 Goals
 💰 Odds: 1.85
 ✅ Confidence: 92%
 
 🏀 *VIRTUAL BASKETBALL*
-🎲 League: Virtual NBA
-📊 Prediction: Total Points Over 215.5
+📊 Prediction: Over 215.5 Points
 💰 Odds: 1.90
 ✅ Confidence: 88%
 
-🏇 *VIRTUAL HORSE RACING*
-🎲 Race: Virtual Derby
-📊 Prediction: Horse #3 to Win
-💰 Odds: 2.10
-✅ Confidence: 85%
-
-⚡ *INSTANT WIN STRATEGY*
-🎰 Game: Virtual Lucky Spin
-📊 Strategy: Bet on Red (5 rounds)
-💰 Expected Return: 150%+
-✅ Confidence: 90%
-
-💡 *Betting Tips:*
-- Start with small stakes
-- Follow our odds recommendations
-- Manage your bankroll wisely
-- Track your wins in /stats
-
-🔥 More predictions in Premium Channel!
-Use /premium to join now!"""
+Use /premium to join channel!"""
                 else:
                     is_premium = False
             except:
@@ -1061,30 +905,20 @@ Use /premium to join now!"""
         if not is_premium:
             predictions_text = f"""🎯 *SAMPLE PREDICTIONS*
 
-📅 Date: {datetime.now().strftime('%B %d, %Y')}
+📅 {datetime.now().strftime('%B %d, %Y')}
 
-⚽ *VIRTUAL FOOTBALL - Sample*
-🎲 Match: Virtual League
-📊 Prediction: [Premium Content]
-💰 Odds: [Premium Content]
-✅ Confidence: 90%+
+⚽ *VIRTUAL FOOTBALL*
+📊 [Premium Content]
+💰 [Premium Content]
 
-🔒 *Subscribe to unlock:*
-✅ Full Daily Predictions
-✅ Detailed Analysis
-✅ Multiple Game Types
-✅ Real-time Updates
-✅ VIP Group Access
-
-💰 Only ₦{self.config.SUBSCRIPTION_AMOUNT / 100:.0f} for 30 days!"""
+🔒 Subscribe to unlock!"""
         
         keyboard = []
         if not is_premium:
-            keyboard.append([InlineKeyboardButton("💎 Subscribe Now", callback_data="subscribe")])
+            keyboard.append([InlineKeyboardButton("💎 Subscribe", callback_data="subscribe")])
         else:
-            keyboard.append([InlineKeyboardButton("🔗 Join Premium Channel", callback_data="premium")])
+            keyboard.append([InlineKeyboardButton("🔗 Join Channel", callback_data="premium")])
         
-        keyboard.append([InlineKeyboardButton("🔙 Back to Menu", callback_data="back_to_menu")])
         reply_markup = InlineKeyboardMarkup(keyboard)
         
         await update.message.reply_text(
@@ -1101,44 +935,14 @@ Use /premium to join now!"""
         
         predictions_viewed = user_data.get('total_predictions_viewed', 0) if user_data else 0
         total_bets = user_data.get('total_bets', 0) if user_data else 0
-        successful_bets = user_data.get('successful_bets', 0) if user_data else 0
         
-        success_rate = (successful_bets / total_bets * 100) if total_bets > 0 else 0
-        
-        stats_text = f"""📈 *YOUR BETTING STATISTICS*
+        stats_text = f"""📈 *YOUR STATISTICS*
 
 👤 User: {user.first_name}
-📅 Member Since: {datetime.fromisoformat(user_data['created_at']).strftime('%B %d, %Y') if user_data else 'Today'}
-
-📊 *Performance:*
 🎯 Predictions Viewed: {predictions_viewed}
-🎲 Total Bets Placed: {total_bets}
-✅ Successful Bets: {successful_bets}
-📈 Success Rate: {success_rate:.1f}%
-
-💎 *Subscription Status:*
-"""
+🎲 Total Bets: {total_bets}"""
         
-        if user_data and user_data['is_premium']:
-            try:
-                end_date = datetime.fromisoformat(user_data['subscription_end'])
-                if end_date > datetime.now(timezone.utc):
-                    days_remaining = (end_date - datetime.now(timezone.utc)).days
-                    stats_text += f"✅ Premium Active ({days_remaining} days remaining)"
-                else:
-                    stats_text += "❌ Premium Expired"
-            except:
-                stats_text += "❌ Premium Expired"
-        else:
-            stats_text += "❌ Free User"
-        
-        stats_text += "\n\n💡 *Tip:* Track your bets and improve your strategy!"
-        
-        keyboard = [
-            [InlineKeyboardButton("🎯 View Predictions", callback_data="predictions")],
-            [InlineKeyboardButton("💎 Upgrade", callback_data="subscribe")],
-            [InlineKeyboardButton("🔙 Back", callback_data="back_to_menu")]
-        ]
+        keyboard = [[InlineKeyboardButton("🔙 Back", callback_data="back_to_menu")]]
         reply_markup = InlineKeyboardMarkup(keyboard)
         
         await update.message.reply_text(
@@ -1149,39 +953,15 @@ Use /premium to join now!"""
     
     async def support_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         user = update.effective_user
-        self.db.add_user(user.id, user.username, user.first_name)
         
         support_text = f"""💬 *Customer Support*
 
-Need help? We're here 24/7! 🚀
-
-📞 *Contact Method:*
 ✈️ Telegram: @okvirtual001
+⏰ Response: Within 30 minutes
 
-⏰ *Response Time:* Within 30 minutes
-🌍 *Availability:* 24/7
-
-🔧 *We Help With:*
-- Payment Issues
-- Group Access Problems
-- Subscription Questions
-- Technical Support
-- Betting Advice
-- Account Management
-
-💡 *Quick Tips:*
-- Include your User ID in messages
-- Describe your issue clearly
-- Mention error messages if any
-
-Your User ID: `{user.id}`
-
-We're committed to your success! 💪"""
+Your User ID: `{user.id}`"""
         
-        keyboard = [
-            [InlineKeyboardButton("✈️ Contact Support", url="https://t.me/okvirtual001")],
-            [InlineKeyboardButton("🔙 Back to Menu", callback_data="back_to_menu")]
-        ]
+        keyboard = [[InlineKeyboardButton("✈️ Contact Support", url="https://t.me/okvirtual001")]]
         reply_markup = InlineKeyboardMarkup(keyboard)
         
         await update.message.reply_text(
@@ -1191,58 +971,20 @@ We're committed to your success! 💪"""
         )
     
     async def help_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        user = update.effective_user
-        self.db.add_user(user.id, user.username, user.first_name)
+        help_text = """ℹ️ *Help & Commands*
+
+📋 *Commands:*
+/start - Start the bot
+/subscribe - Subscribe to premium
+/status - Check subscription status
+/predictions - View predictions
+/stats - View statistics
+/support - Get support
+/premium - Get invite link
+
+💰 *Subscription:* ₦100 for 30 Days"""
         
-        help_text = """ℹ️ *Help & Commands Guide*
-
-📋 *Available Commands:*
-/start - Start the bot and see main menu
-/subscribe - Subscribe to premium (₦100/month)
-/status - Check your subscription status
-/predictions - View today's betting predictions
-/stats - View your betting statistics
-/support - Get customer support
-/help - Show this help message
-/premium - Get premium channel invite link
-
-🎯 *About OK Virtuals Betting Bot:*
-We provide expert predictions for Virtual Games with 90%+ accuracy rate.
-
-✨ *Premium Features:*
-- Daily Sure Bet Predictions
-- Virtual Football, Basketball, Horse Racing
-- Instant Win Strategies
-- Real-time Tips & Notifications
-- VIP Telegram Group via Invite Link
-- 24/7 Premium Support
-- Detailed Analytics
-
-💰 *Subscription:*
-- Price: ₦100 for 30 Days
-- Payment: Secure via Flutterwave
-- Instant Invite Link on Payment
-- Auto Removal after Expiry
-- Easy Renewal Process
-
-🔐 *Security:*
-- Bank-level encryption
-- Trusted payment gateway
-- Unique invite links per user
-
-📱 *Getting Started:*
-1. Use /subscribe to see plans
-2. Complete payment via secure link
-3. Get unique invite link instantly
-4. Join premium channel and start winning!
-
-Need help? Use /support 💬"""
-        
-        keyboard = [
-            [InlineKeyboardButton("💎 Subscribe Now", callback_data="subscribe")],
-            [InlineKeyboardButton("💬 Support", url="https://t.me/okvirtual001")],
-            [InlineKeyboardButton("🔙 Back", callback_data="back_to_menu")]
-        ]
+        keyboard = [[InlineKeyboardButton("💎 Subscribe", callback_data="subscribe")]]
         reply_markup = InlineKeyboardMarkup(keyboard)
         
         await update.message.reply_text(
@@ -1255,34 +997,19 @@ Need help? Use /support 💬"""
         user = update.effective_user
         
         if not self.is_admin(user.id):
-            await update.message.reply_text("❌ You don't have permission to access admin panel.")
+            await update.message.reply_text("❌ Unauthorized")
             return
         
         stats = self.db.get_admin_stats()
         
         admin_text = f"""👑 *Admin Dashboard*
 
-📊 *Statistics:*
 👥 Total Users: {stats.get('total_users', 0)}
-💎 Active Subscriptions: {stats.get('active_subscriptions', 0)}
-💰 Total Revenue: ₦{stats.get('total_revenue', 0):.2f}
-📅 Today's Subscriptions: {stats.get('today_subscriptions', 0)}
-⚠️ Expiring Soon (7 days): {stats.get('expiring_soon', 0)}
-
-🔧 *Admin Controls:*
-Use buttons below for actions."""
+💎 Active Subs: {stats.get('active_subscriptions', 0)}
+💰 Revenue: ₦{stats.get('total_revenue', 0):.2f}
+📅 Today: {stats.get('today_subscriptions', 0)}"""
         
-        keyboard = [
-            [InlineKeyboardButton("📊 Refresh Stats", callback_data="admin_refresh")],
-            [InlineKeyboardButton("🔙 Back", callback_data="back_to_menu")]
-        ]
-        reply_markup = InlineKeyboardMarkup(keyboard)
-        
-        await update.message.reply_text(
-            admin_text,
-            reply_markup=reply_markup,
-            parse_mode=ParseMode.MARKDOWN
-        )
+        await update.message.reply_text(admin_text, parse_mode=ParseMode.MARKDOWN)
     
     async def premium_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         user = update.effective_user
@@ -1299,100 +1026,37 @@ Use buttons below for actions."""
                     if invite_link:
                         self.db.save_invite_link(user.id, invite_link)
                         
-                        is_member = await self.group_manager.check_membership(user.id)
-                        
-                        if is_member:
-                            premium_text = f"""✅ *You're Already in Premium Channel!*
+                        premium_text = f"""💎 *Premium Channel Access*
 
-You're currently a member of the premium channel.
-
-📅 *Subscription Valid Until:* {end_date.strftime('%B %d, %Y')}
-
-🔗 *Channel Link:*
+🔗 *Your Invite Link:*
 {invite_link}
 
-💡 *Tip:* Use /status to check your subscription details!"""
-                        else:
-                            premium_text = f"""💎 *Premium Channel Access*
-
-Your subscription is active! Here's your invite link:
-
-🔗 *Click to Join:*
-{invite_link}
-
-⚠️ *Important:*
-- Link expires in 24 hours
-- Single-use only
-- Use /premium to get a new link anytime
-
-📅 *Valid Until:* {end_date.strftime('%B %d, %Y')}
-
-🎯 *In Premium Channel:*
-- Daily Sure Bet Predictions
-- Live Betting Tips
-- Expert Analysis
-- VIP Community
-- Instant Updates
-
-Click the button below to join! 👇"""
+⚠️ Link expires in 24 hours
+📅 Valid until: {end_date.strftime('%B %d, %Y')}"""
                         
-                        keyboard = [
-                            [InlineKeyboardButton("🔗 Join Premium Channel", url=invite_link)],
-                            [InlineKeyboardButton("📊 My Status", callback_data="status")]
-                        ]
+                        keyboard = [[InlineKeyboardButton("🔗 Join Now", url=invite_link)]]
                     else:
                         premium_text = f"""💎 *Premium Access Active*
 
-Your subscription is active until {end_date.strftime('%B %d, %Y')}
-
-⚠️ Unable to create invite link. Please try:
-1. Join via: {self.config.PREMIUM_CHANNEL_USERNAME}
-2. Or contact support: @okvirtual001"""
-                        
-                        keyboard = [
-                            [InlineKeyboardButton("💬 Contact Support", url="https://t.me/okvirtual001")]
-                        ]
+⚠️ Unable to create link
+Join via: {self.config.PREMIUM_CHANNEL_USERNAME}"""
+                        keyboard = []
                 else:
-                    premium_text = "⚠️ Your premium subscription has expired. Renew to regain access!"
-                    keyboard = [
-                        [InlineKeyboardButton("💎 Renew Subscription", callback_data="subscribe")]
-                    ]
-            except Exception as e:
-                logger.error(f"Error in premium command: {str(e)}")
-                premium_text = "❌ Error checking subscription. Please contact support."
-                keyboard = [
-                    [InlineKeyboardButton("💬 Support", url="https://t.me/okvirtual001")]
-                ]
+                    premium_text = "⚠️ Subscription expired!"
+                    keyboard = [[InlineKeyboardButton("💎 Renew", callback_data="subscribe")]]
+            except:
+                premium_text = "❌ Error checking subscription"
+                keyboard = []
         else:
-            premium_text = f"""🔒 *Premium Access Required*
+            premium_text = """🔒 *Premium Access Required*
 
-You need an active subscription to access the premium channel.
+Subscribe to get access!
 
-💎 *Subscribe Now:*
-- Price: ₦{self.config.SUBSCRIPTION_AMOUNT / 100:.0f}
-- Duration: 30 Days
-- Instant Access via Invite Link
-
-🎯 *Get Access To:*
-✅ Daily Sure Predictions
-✅ Expert Analysis
-✅ VIP Community
-✅ Real-time Tips
-✅ 90%+ Accuracy
-
-Subscribe now to unlock! 🚀"""
-            
-            keyboard = [
-                [InlineKeyboardButton("💎 Subscribe (₦100)", callback_data="subscribe")],
-                [InlineKeyboardButton("📊 View Sample", callback_data="predictions")]
-            ]
+💰 Only ₦100 for 30 days"""
+            keyboard = [[InlineKeyboardButton("💎 Subscribe", callback_data="subscribe")]]
         
         reply_markup = InlineKeyboardMarkup(keyboard)
-        await update.message.reply_text(
-            premium_text,
-            reply_markup=reply_markup,
-            parse_mode=ParseMode.MARKDOWN
-        )
+        await update.message.reply_text(premium_text, reply_markup=reply_markup, parse_mode=ParseMode.MARKDOWN)
     
     async def process_payment_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         query = update.callback_query
@@ -1401,13 +1065,10 @@ Subscribe now to unlock! 🚀"""
         user_id = query.from_user.id
         
         if not self.rate_limiter.is_allowed(user_id):
-            await query.edit_message_text(
-                "⚠️ Please wait before making another payment request.",
-                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", callback_data="subscribe")]])
-            )
+            await query.edit_message_text("⚠️ Please wait before making another request.")
             return
         
-        await query.edit_message_text("⏳ Creating secure payment link... Please wait.")
+        await query.edit_message_text("⏳ Creating payment link...")
         
         try:
             payment_result = self.payment.create_payment_link(user_id, self.config.SUBSCRIPTION_AMOUNT)
@@ -1415,27 +1076,22 @@ Subscribe now to unlock! 🚀"""
             if payment_result['status'] == 'success':
                 self.db.add_payment_record(user_id, payment_result['tx_ref'], self.config.SUBSCRIPTION_AMOUNT)
                 
-                price_naira = self.config.SUBSCRIPTION_AMOUNT / 100
                 payment_text = f"""💳 *Payment Details*
 
-💰 Amount: ₦{price_naira:.0f}
-⏰ Duration: {self.config.SUBSCRIPTION_DAYS} Days
-🔒 Secure Payment via Flutterwave
+💰 Amount: ₦{self.config.SUBSCRIPTION_AMOUNT / 100:.0f}
+⏰ Duration: 30 Days
 
 📝 *Instructions:*
-1️⃣ Click "Pay Now" button below
-2️⃣ Complete payment securely (Card/Transfer/USSD)
-3️⃣ After payment, click "I have Paid"
-4️⃣ Wait for verification (usually instant)
-5️⃣ Get your premium invite link!
+1️⃣ Click "Pay Now"
+2️⃣ Complete payment
+3️⃣ Click "I have Paid"
+4️⃣ Get instant access!
 
-⚠️ *Important:* Keep this chat open until verification is complete!
-
-Transaction ID: `{payment_result['tx_ref']}`"""
+Transaction: `{payment_result['tx_ref']}`"""
                 
                 keyboard = [
-                    [InlineKeyboardButton("💳 Pay ₦100 Now", url=payment_result['link'])],
-                    [InlineKeyboardButton("✅ I have Paid - Verify", callback_data=f"verify_{payment_result['tx_ref']}")],
+                    [InlineKeyboardButton("💳 Pay Now", url=payment_result['link'])],
+                    [InlineKeyboardButton("✅ I have Paid", callback_data=f"verify_{payment_result['tx_ref']}")],
                     [InlineKeyboardButton("❌ Cancel", callback_data="subscribe")]
                 ]
                 reply_markup = InlineKeyboardMarkup(keyboard)
@@ -1446,22 +1102,12 @@ Transaction ID: `{payment_result['tx_ref']}`"""
                     parse_mode=ParseMode.MARKDOWN
                 )
             else:
-                error_message = payment_result.get('message', 'Payment link creation failed')
                 await query.edit_message_text(
-                    f"❌ Error: {error_message}\n\nPlease contact support: @okvirtual001",
-                    reply_markup=InlineKeyboardMarkup([
-                        [InlineKeyboardButton("💬 Contact Support", url="https://t.me/okvirtual001")],
-                        [InlineKeyboardButton("🔙 Back", callback_data="subscribe")]
-                    ])
+                    f"❌ Error: {payment_result.get('message', 'Failed')}\n\nContact: @okvirtual001"
                 )
         except Exception as e:
-            logger.error(f"Error processing payment: {str(e)}")
-            await query.edit_message_text(
-                "❌ An error occurred. Please contact support: @okvirtual001",
-                reply_markup=InlineKeyboardMarkup([
-                    [InlineKeyboardButton("💬 Contact Support", url="https://t.me/okvirtual001")]
-                ])
-            )
+            logger.error(f"Payment error: {str(e)}")
+            await query.edit_message_text("❌ Error. Contact support: @okvirtual001")
     
     async def verify_payment_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         query = update.callback_query
@@ -1472,38 +1118,14 @@ Transaction ID: `{payment_result['tx_ref']}`"""
         
         payment_record = self.db.get_payment_record(tx_ref)
         if not payment_record or payment_record['user_id'] != user_id:
-            await query.edit_message_text(
-                "❌ Payment record not found. Please contact support: @okvirtual001",
-                reply_markup=InlineKeyboardMarkup([
-                    [InlineKeyboardButton("💬 Support", url="https://t.me/okvirtual001")]
-                ])
-            )
+            await query.edit_message_text("❌ Payment not found. Contact: @okvirtual001")
             return
         
         if payment_record['status'] == 'completed':
-            user_data = self.db.get_user(user_id)
-            invite_link = user_data.get('invite_link') if user_data else None
-            
-            if invite_link:
-                await query.edit_message_text(
-                    f"✅ This payment has already been processed!\n\n"
-                    f"🔗 Your Premium Invite Link:\n{invite_link}\n\n"
-                    f"Click the link above to join the premium channel!",
-                    reply_markup=InlineKeyboardMarkup([
-                        [InlineKeyboardButton("🔗 Join Premium Channel", url=invite_link)],
-                        [InlineKeyboardButton("📊 My Status", callback_data="status")]
-                    ])
-                )
-            else:
-                await query.edit_message_text(
-                    "✅ Payment already processed! Use /premium to get your invite link.",
-                    reply_markup=InlineKeyboardMarkup([
-                        [InlineKeyboardButton("🔗 Get Invite Link", callback_data="premium")]
-                    ])
-                )
+            await query.edit_message_text("✅ Already processed! Use /premium for link.")
             return
         
-        await query.edit_message_text("⏳ Verifying your payment... Please wait.")
+        await query.edit_message_text("⏳ Verifying payment...")
         
         try:
             verification_result = self.payment.verify_payment(tx_ref)
@@ -1532,10 +1154,7 @@ Transaction ID: `{payment_result['tx_ref']}`"""
                     end_date = start_date + timedelta(days=self.config.SUBSCRIPTION_DAYS)
                 
                 self.db.update_subscription(user_id, start_date, end_date, is_renewal)
-                self.db.update_payment_status(
-                    tx_ref, 
-                    'completed',verification_result.get('data', {}).get('id')
-                )
+                self.db.update_payment_status(tx_ref, 'completed', verification_result.get('data', {}).get('id'))
                 
                 invite_link = await self.group_manager.create_invite_link(user_id)
                 
@@ -1544,95 +1163,57 @@ Transaction ID: `{payment_result['tx_ref']}`"""
                     
                     success_text = f"""🎉 *PAYMENT SUCCESSFUL!*
 
-Welcome to OK Virtuals Premium! 💎
+Welcome to Premium! 💎
 
-📅 *Subscription {"Extended" if is_renewal else "Activated"}*
-⏰ Valid Until: {end_date.strftime('%B %d, %Y at %H:%M UTC')}
-💰 Amount Paid: ₦{self.config.SUBSCRIPTION_AMOUNT / 100:.0f}
+📅 Valid Until: {end_date.strftime('%B %d, %Y')}
+💰 Paid: ₦{self.config.SUBSCRIPTION_AMOUNT / 100:.0f}
 
-🔗 *Your Premium Invite Link:*
+🔗 *Your Invite Link:*
 {invite_link}
 
-⚠️ *IMPORTANT:*
-- This link is unique to you
-- Click it to join the premium channel
-- Link expires in 24 hours
-- Use /premium anytime to get a new link
+⚠️ Link expires in 24 hours!
 
-🎯 *You Now Have Access To:*
-✅ Daily Sure Bet Predictions
-✅ Virtual Football Tips
-✅ Virtual Basketball Strategies
-✅ Horse Racing Insights
-✅ Instant Win Techniques
-✅ VIP Community
-✅ Real-time Updates
-✅ 24/7 Premium Support
-
-🚀 Click the button below to join now!
-
-Use /predictions to see today's tips! 🎯"""
+Use /predictions to see tips! 🎯"""
                     
                     keyboard = [
-                        [InlineKeyboardButton("🔗 Join Premium Channel NOW", url=invite_link)],
-                        [InlineKeyboardButton("🎯 View Predictions", callback_data="predictions")],
-                        [InlineKeyboardButton("📊 My Status", callback_data="status")]
+                        [InlineKeyboardButton("🔗 Join Channel NOW", url=invite_link)],
+                        [InlineKeyboardButton("🎯 Predictions", callback_data="predictions")]
                     ]
-                    reply_markup = InlineKeyboardMarkup(keyboard)
-                    
-                    await query.edit_message_text(
-                        success_text,
-                        reply_markup=reply_markup,
-                        parse_mode=ParseMode.MARKDOWN
-                    )
-                    
-                    self.db.log_notification(user_id, "payment_success", f"Payment successful: {tx_ref}")
-                    
                 else:
                     success_text = f"""🎉 *PAYMENT SUCCESSFUL!*
 
-Welcome to OK Virtuals Premium! 💎
+Welcome to Premium! 💎
 
-📅 *Subscription {"Extended" if is_renewal else "Activated"}*
-⏰ Valid Until: {end_date.strftime('%B %d, %Y at %H:%M UTC')}
-💰 Amount Paid: ₦{self.config.SUBSCRIPTION_AMOUNT / 100:.0f}
+📅 Valid Until: {end_date.strftime('%B %d, %Y')}
 
-⚠️ Unable to create invite link automatically.
-Please use /premium command to get your invite link!
-
-Or join via: {self.config.PREMIUM_CHANNEL_USERNAME}"""
+Use /premium to get invite link!"""
                     
-                    keyboard = [
-                        [InlineKeyboardButton("🔗 Get Invite Link", callback_data="premium")],
-                        [InlineKeyboardButton("📊 My Status", callback_data="status")]
-                    ]
-                    reply_markup = InlineKeyboardMarkup(keyboard)
-                    
-                    await query.edit_message_text(
-                        success_text,
-                        reply_markup=reply_markup,
-                        parse_mode=ParseMode.MARKDOWN
-                    )
+                    keyboard = [[InlineKeyboardButton("🔗 Get Link", callback_data="premium")]]
                 
-                logger.info(f"Successfully processed payment for user {user_id} (renewal: {is_renewal})")
+                reply_markup = InlineKeyboardMarkup(keyboard)
+                
+                await query.edit_message_text(
+                    success_text,
+                    reply_markup=reply_markup,
+                    parse_mode=ParseMode.MARKDOWN
+                )
+                
+                self.db.log_notification(user_id, "payment_success", f"Payment: {tx_ref}")
+                logger.info(f"Payment successful for user {user_id}")
                 
             else:
                 await query.edit_message_text(
-                    "⚠️ Payment verification failed or still pending.\n\n"
-                    "If you've paid, please wait a few minutes and try again.\n"
-                    "If the problem persists, contact support: @okvirtual001",
+                    "⚠️ Payment not confirmed yet.\n\nWait and try again.\nContact: @okvirtual001",
                     reply_markup=InlineKeyboardMarkup([
-                        [InlineKeyboardButton("🔄 Try Again", callback_data=f"verify_{tx_ref}")],
-                        [InlineKeyboardButton("💬 Support", url="https://t.me/okvirtual001")]
+                        [InlineKeyboardButton("🔄 Try Again", callback_data=f"verify_{tx_ref}")]
                     ])
                 )
         except Exception as e:
-            logger.error(f"Error during payment verification: {str(e)}")
+            logger.error(f"Verification error: {str(e)}")
             await query.edit_message_text(
-                "❌ Error verifying payment. Please contact support: @okvirtual001",
+                "❌ Verification error. Contact: @okvirtual001",
                 reply_markup=InlineKeyboardMarkup([
-                    [InlineKeyboardButton("🔄 Try Again", callback_data=f"verify_{tx_ref}")],
-                    [InlineKeyboardButton("💬 Support", url="https://t.me/okvirtual001")]
+                    [InlineKeyboardButton("🔄 Try Again", callback_data=f"verify_{tx_ref}")]
                 ])
             )
     
@@ -1656,62 +1237,26 @@ Or join via: {self.config.PREMIUM_CHANNEL_USERNAME}"""
                 await self.support_button(query, context)
             elif query.data == "premium":
                 await self.premium_button(query, context)
-            elif query.data == "learn_more":
-                await self.learn_more_callback(update, context)
             elif query.data == "back_to_menu":
                 await self.back_to_menu(query, context)
-            elif query.data.startswith("admin_"):
-                await self.handle_admin_callback(query, context)
             else:
-                await query.answer("Unknown action.")
+                await query.answer("Unknown action")
         except Exception as e:
-            logger.error(f"Error handling button {query.data}: {str(e)}")
-            await query.answer("Something went wrong. Please try again.")
+            logger.error(f"Button error: {str(e)}")
+            await query.answer("Error occurred")
     
     async def subscribe_button(self, query, context):
         await query.answer()
-        user_id = query.from_user.id
-        user_data = self.db.get_user(user_id)
         
-        if user_data and user_data['is_premium']:
-            try:
-                end_date = datetime.fromisoformat(user_data['subscription_end'])
-                if end_date > datetime.now(timezone.utc):
-                    days_remaining = (end_date - datetime.now(timezone.utc)).days
-                    await query.edit_message_text(
-                        f"✅ You already have an active subscription!\n\n"
-                        f"📅 Expires: {end_date.strftime('%B %d, %Y')}\n"
-                        f"⏰ {days_remaining} days remaining\n\n"
-                        f"💡 You can renew early to extend your subscription!",
-                        reply_markup=InlineKeyboardMarkup([
-                            [InlineKeyboardButton("🔗 Access Channel", callback_data="premium")],
-                            [InlineKeyboardButton("🔙 Back", callback_data="back_to_menu")]
-                        ])
-                    )
-                    return
-            except:
-                pass
-        
-        price_naira = self.config.SUBSCRIPTION_AMOUNT / 100
         subscribe_text = f"""💎 *Premium Subscription*
 
-💰 *Price:* ₦{price_naira:.0f}
-⏰ *Duration:* 30 Days
-📊 *Success Rate:* 90%+
-
-✨ *Includes:*
-✅ Daily Predictions
-✅ VIP Group Access
-✅ Expert Analysis
-✅ Real-time Tips
-✅ 24/7 Support
-✅ Unique Invite Link
+💰 Price: ₦{self.config.SUBSCRIPTION_AMOUNT / 100:.0f}
+⏰ Duration: 30 Days
 
 Click below to subscribe!"""
         
         keyboard = [
-            [InlineKeyboardButton("💳 Pay ₦100 Now", callback_data="process_payment")],
-            [InlineKeyboardButton("📊 Sample Tips", callback_data="predictions")],
+            [InlineKeyboardButton("💳 Pay Now", callback_data="process_payment")],
             [InlineKeyboardButton("🔙 Back", callback_data="back_to_menu")]
         ]
         
@@ -1761,117 +1306,20 @@ Click below to subscribe!"""
         })()
         await self.premium_command(mock_update, context)
     
-    async def learn_more_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        query = update.callback_query
-        await query.answer()
-        
-        info_text = """ℹ️ *About OK Virtuals Betting*
-
-🎯 *Our Mission:*
-Provide accurate betting predictions for Virtual Games with 90%+ success rate.
-
-💎 *Premium Features:*
-✅ Daily Sure Bet Predictions
-✅ Virtual Football Analysis
-✅ Virtual Basketball Tips
-✅ Horse Racing Insights
-✅ Instant Win Strategies
-✅ Real-time Notifications
-✅ VIP Telegram Group (via Invite Link)
-✅ Expert Analysis & Stats
-✅ 24/7 Premium Support
-
-📊 *Success Rate:* 90%+ Accuracy
-🏆 *Track Record:* 1000+ Satisfied Members
-💰 *Pricing:* Only ₦100 for 30 Days
-
-🔒 *Security:*
-- Secure Flutterwave Payment
-- Bank-level Encryption
-- Unique Invite Links
-- Instant Access
-
-🎲 *Games We Cover:*
-- Virtual Football (Premier League, Champions League)
-- Virtual Basketball (NBA, FIBA)
-- Virtual Horse Racing (Derby, Classic)
-- Instant Win Games (Lucky Spin, Roulette)
-
-🌟 *What Makes Us Different:*
-- Professional Analysts Team
-- AI-Powered Predictions
-- Real-time Market Data
-- Proven Track Record
-- Active Community
-- Automatic Access Management
-
-💪 Join 1000+ winning members today!"""
-        
-        keyboard = [
-            [InlineKeyboardButton("💎 Subscribe Now", callback_data="subscribe")],
-            [InlineKeyboardButton("📊 Sample Predictions", callback_data="predictions")],
-            [InlineKeyboardButton("🔙 Back to Menu", callback_data="back_to_menu")]
-        ]
-        reply_markup = InlineKeyboardMarkup(keyboard)
-        
-        await query.edit_message_text(
-            info_text,
-            reply_markup=reply_markup,
-            parse_mode=ParseMode.MARKDOWN
-        )
-    
-    async def handle_admin_callback(self, query, context):
-        if not self.is_admin(query.from_user.id):
-            await query.answer("❌ Unauthorized")
-            return
-        
-        await query.answer()
-        
-        if query.data == "admin_refresh":
-            stats = self.db.get_admin_stats()
-            
-            admin_text = f"""👑 *Admin Dashboard*
-
-📊 *Statistics:*
-👥 Total Users: {stats.get('total_users', 0)}
-💎 Active Subscriptions: {stats.get('active_subscriptions', 0)}
-💰 Total Revenue: ₦{stats.get('total_revenue', 0):.2f}
-📅 Today's Subscriptions: {stats.get('today_subscriptions', 0)}
-⚠️ Expiring Soon (7 days): {stats.get('expiring_soon', 0)}
-
-🔧 *Admin Controls:*
-Use buttons below for actions."""
-            
-            keyboard = [
-                [InlineKeyboardButton("📊 Refresh Stats", callback_data="admin_refresh")],
-                [InlineKeyboardButton("🔙 Back", callback_data="back_to_menu")]
-            ]
-            reply_markup = InlineKeyboardMarkup(keyboard)
-            
-            await query.edit_message_text(
-                admin_text,
-                reply_markup=reply_markup,
-                parse_mode=ParseMode.MARKDOWN
-            )
-    
     async def back_to_menu(self, query, context):
         await query.answer()
         user = query.from_user
         
-        welcome_text = f"""🎯 *OK Virtuals Betting Predictions*
+        welcome_text = f"""🎯 *OK Virtuals Betting*
 
 Hello {user.first_name}! 👋
 
-💎 Premium betting predictions at your fingertips!
-
-Use the buttons below to navigate."""
+Use buttons below to navigate."""
         
         keyboard = [
-            [InlineKeyboardButton("💎 Subscribe (₦100)", callback_data="subscribe")],
+            [InlineKeyboardButton("💎 Subscribe", callback_data="subscribe")],
             [InlineKeyboardButton("📊 Status", callback_data="status"),
-             InlineKeyboardButton("🎯 Predictions", callback_data="predictions")],
-            [InlineKeyboardButton("📈 Stats", callback_data="stats"),
-             InlineKeyboardButton("💬 Support", url="https://t.me/okvirtual001")]
+             InlineKeyboardButton("🎯 Predictions", callback_data="predictions")]
         ]
         
         await query.edit_message_text(
@@ -1887,7 +1335,7 @@ class WebhookHandler(BaseHTTPRequestHandler):
                 health_status = {
                     "status": "healthy",
                     "timestamp": datetime.now(timezone.utc).isoformat(),
-                    "service": "OK Virtuals Betting Bot"
+                    "service": "OK Virtuals Bot"
                 }
                 
                 self.send_response(200)
@@ -1913,12 +1361,7 @@ class WebhookHandler(BaseHTTPRequestHandler):
                 
                 if signature == CONFIG.FLUTTERWAVE_WEBHOOK_SECRET:
                     webhook_data = json.loads(post_data.decode('utf-8'))
-                    
-                    threading.Thread(
-                        target=self.process_webhook,
-                        args=(webhook_data,),
-                        daemon=True
-                    ).start()
+                    logger.info(f"Webhook received: {webhook_data.get('event')}")
                     
                     self.send_response(200)
                     self.send_header('Content-type', 'application/json')
@@ -1937,21 +1380,6 @@ class WebhookHandler(BaseHTTPRequestHandler):
             self.send_response(500)
             self.end_headers()
     
-    def process_webhook(self, webhook_data):
-        try:
-            event_type = webhook_data.get('event')
-            
-            if event_type == 'charge.completed':
-                tx_data = webhook_data.get('data', {})
-                tx_ref = tx_data.get('tx_ref')
-                status = tx_data.get('status')
-                
-                if status == 'successful' and tx_ref:
-                    logger.info(f"Webhook received for successful payment: {tx_ref}")
-                    
-        except Exception as e:
-            logger.error(f"Error processing webhook: {str(e)}")
-    
     def log_message(self, format, *args):
         pass
 
@@ -1965,7 +1393,7 @@ def run_webhook_server():
 
 def signal_handler(signum, frame):
     global shutdown_flag
-    logger.info(f"Received signal {signum}, initiating graceful shutdown...")
+    logger.info("Initiating graceful shutdown...")
     shutdown_flag = True
 
 def main():
@@ -1977,17 +1405,15 @@ def main():
     logger.info("Starting OK Virtuals Betting Bot...")
     
     bot = OKVirtualsBot(CONFIG)
-    logger.info("Bot initialized successfully")
+    logger.info("Bot initialized")
     
     application = Application.builder().token(CONFIG.BOT_TOKEN).build()
     bot.application = application
     bot_application = application
     bot.group_manager = GroupManager(application)
-    logger.info("Telegram application created successfully")
     
     bot.subscription_monitor = SubscriptionMonitor(bot.db, bot.group_manager)
     bot.subscription_monitor.start()
-    logger.info("Subscription monitor started")
     
     application.add_handler(CommandHandler("start", bot.start_command))
     application.add_handler(CommandHandler("subscribe", bot.subscribe_command))
@@ -1998,33 +1424,25 @@ def main():
     application.add_handler(CommandHandler("help", bot.help_command))
     application.add_handler(CommandHandler("premium", bot.premium_command))
     application.add_handler(CommandHandler("admin", bot.admin_command))
-    
     application.add_handler(CallbackQueryHandler(bot.button_callback))
     
     webhook_thread = threading.Thread(target=run_webhook_server, daemon=True)
     webhook_thread.start()
     
-    logger.info("OK Virtuals Betting Bot started successfully!")
-    print("=" * 60)
-    print("🎯 OK VIRTUALS BETTING BOT IS RUNNING")
-    print("=" * 60)
-    print(f"💚 Health check: http://0.0.0.0:{CONFIG.PORT}/health")
-    print(f"🔔 Webhook URL: http://0.0.0.0:{CONFIG.PORT}/webhook/flutterwave")
-    print(f"💰 Subscription: ₦{CONFIG.SUBSCRIPTION_AMOUNT / 100:.0f} for {CONFIG.SUBSCRIPTION_DAYS} days")
+    logger.info("✅ OK Virtuals Betting Bot Started!")
+    print("=" * 50)
+    print("🎯 OK VIRTUALS BOT RUNNING")
+    print("=" * 50)
+    print(f"💚 Health: http://0.0.0.0:{CONFIG.PORT}/health")
+    print(f"💰 Price: ₦{CONFIG.SUBSCRIPTION_AMOUNT / 100:.0f}")
     print(f"📱 Support: @okvirtual001")
-    print(f"👑 Admins: {len(bot.admin_ids)}")
-    print("\n📋 Available Commands:")
-    for cmd in BOT_COMMANDS:
-        print(f"  /{cmd.command} - {cmd.description}")
-    print("=" * 60)
+    print("=" * 50)
     
     max_retries = 5
     retry_count = 0
     
     while not shutdown_flag and retry_count < max_retries:
         try:
-            logger.info(f"Starting bot polling (attempt {retry_count + 1}/{max_retries})")
-            
             async def post_init(application):
                 await bot.setup_bot_commands()
             
@@ -2037,22 +1455,20 @@ def main():
             )
             break
             
-        except Conflict as e:
+        except Conflict:
             retry_count += 1
-            logger.warning(f"Telegram conflict: {str(e)}")
             if retry_count < max_retries:
                 wait_time = min(retry_count * 10, 60)
-                logger.info(f"Waiting {wait_time}s before retry")
+                logger.info(f"Conflict. Retrying in {wait_time}s...")
                 time.sleep(wait_time)
             else:
                 logger.error("Max retries reached")
                 break
                 
-        except (NetworkError, TimedOut) as e:
+        except (NetworkError, TimedOut):
             retry_count += 1
-            logger.warning(f"Network error: {str(e)}")
             if retry_count < max_retries:
-                logger.info(f"Retrying in 30s...")
+                logger.info("Network error. Retrying in 30s...")
                 time.sleep(30)
             else:
                 logger.error("Max retries reached")
@@ -2074,4 +1490,3 @@ if __name__ == '__main__':
         logger.info("Bot stopped by user")
     except Exception as e:
         logger.error(f"Fatal error: {str(e)}")
-        logger.exception("Full traceback:")
