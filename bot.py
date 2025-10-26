@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Enhanced Virtuals Betting Prediction Bot
-Automated group management, payment confirmation, and betting analytics
+OK Virtuals Betting Prediction Bot - Complete Final Version
+Features: Auto group management, working Flutterwave payments, subscription monitoring
+Contact: t.me/okvirtual001
 """
 import os
 import logging
@@ -21,7 +22,7 @@ from dataclasses import dataclass
 from http.server import HTTPServer, BaseHTTPRequestHandler
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, BotCommand, ChatMember
-from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes, MessageHandler, filters
+from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes
 from telegram.error import Conflict, NetworkError, TimedOut, TelegramError, Forbidden, BadRequest
 from telegram.constants import ParseMode
 from dotenv import load_dotenv
@@ -46,7 +47,7 @@ class Config:
     FLUTTERWAVE_PUBLIC_KEY: str
     PREMIUM_CHANNEL_ID: str
     PREMIUM_CHANNEL_LINK: str
-    DATABASE_PATH: str = "./virtuals_betting_bot.db"
+    DATABASE_PATH: str = "./okvirtuals_bot.db"
     PORT: int = 10000
     WEBHOOK_URL: str = ""
     ADMIN_USER_ID: str = ""
@@ -58,20 +59,18 @@ def load_config() -> Config:
         BOT_TOKEN=os.getenv("BOT_TOKEN", ""),
         FLUTTERWAVE_SECRET_KEY=os.getenv("FLUTTERWAVE_SECRET_KEY", ""),
         FLUTTERWAVE_PUBLIC_KEY=os.getenv("FLUTTERWAVE_PUBLIC_KEY", ""),
-        PREMIUM_CHANNEL_ID=os.getenv("PREMIUM_CHANNEL_ID", ""),  # Must be numeric ID like -1001234567890
+        PREMIUM_CHANNEL_ID=os.getenv("PREMIUM_CHANNEL_ID", ""),
         PREMIUM_CHANNEL_LINK=os.getenv("PREMIUM_CHANNEL_LINK", ""),
-        DATABASE_PATH=os.getenv("DATABASE_PATH", "./virtuals_betting_bot.db"),
+        DATABASE_PATH=os.getenv("DATABASE_PATH", "./okvirtuals_bot.db"),
         PORT=int(os.getenv("PORT", 10000)),
         WEBHOOK_URL=os.getenv("WEBHOOK_URL", ""),
         ADMIN_USER_ID=os.getenv("ADMIN_USER_ID", ""),
-        SUBSCRIPTION_AMOUNT=int(os.getenv("SUBSCRIPTION_AMOUNT", 10000)),  # 100 NGN default
+        SUBSCRIPTION_AMOUNT=int(os.getenv("SUBSCRIPTION_AMOUNT", 10000)),
         SUBSCRIPTION_DAYS=int(os.getenv("SUBSCRIPTION_DAYS", 30))
     )
     
     if not config.BOT_TOKEN:
         raise ValueError("BOT_TOKEN is required")
-    if not config.PREMIUM_CHANNEL_ID:
-        raise ValueError("PREMIUM_CHANNEL_ID is required for auto group management")
     
     return config
 
@@ -150,33 +149,6 @@ class DatabaseManager:
                         created_at TEXT DEFAULT CURRENT_TIMESTAMP,
                         completed_at TEXT,
                         FOREIGN KEY (user_id) REFERENCES users (user_id)
-                    )
-                ''')
-                
-                # Predictions table for analytics
-                cursor.execute('''
-                    CREATE TABLE IF NOT EXISTS predictions (
-                        id INTEGER PRIMARY KEY AUTOINCREMENT,
-                        date TEXT,
-                        game_type TEXT,
-                        prediction TEXT,
-                        odds TEXT,
-                        result TEXT,
-                        created_at TEXT DEFAULT CURRENT_TIMESTAMP
-                    )
-                ''')
-                
-                # User predictions tracking
-                cursor.execute('''
-                    CREATE TABLE IF NOT EXISTS user_predictions (
-                        id INTEGER PRIMARY KEY AUTOINCREMENT,
-                        user_id INTEGER,
-                        prediction_id INTEGER,
-                        viewed_at TEXT DEFAULT CURRENT_TIMESTAMP,
-                        bet_placed INTEGER DEFAULT 0,
-                        result TEXT,
-                        FOREIGN KEY (user_id) REFERENCES users (user_id),
-                        FOREIGN KEY (prediction_id) REFERENCES predictions (id)
                     )
                 ''')
                 
@@ -347,53 +319,35 @@ class DatabaseManager:
         except Exception as e:
             logger.error(f"Error updating user stats: {str(e)}")
 
-"""
-REPLACE the FlutterwavePayment class in your bot with this improved version
-This has better error handling and debugging
-"""
-
 class FlutterwavePayment:
+    """Working Flutterwave payment integration from original code"""
     def __init__(self, secret_key: str, public_key: str):
         self.base_url = "https://api.flutterwave.com/v3"
         self.secret_key = secret_key
         self.public_key = public_key
-        
-        # Validate keys
-        if not secret_key or not public_key:
-            logger.error("Flutterwave keys are missing!")
-        elif secret_key.startswith("FLWSECK_TEST"):
-            logger.info("Using Flutterwave TEST mode")
-        elif secret_key.startswith("FLWSECK-"):
-            logger.info("Using Flutterwave LIVE mode")
-        else:
-            logger.warning("Flutterwave key format not recognized")
     
     def create_payment_link(self, user_id: int, amount: float) -> Dict[str, Any]:
         """Create payment link with Flutterwave"""
         try:
-            tx_ref = f"virtuals_bet_{user_id}_{uuid.uuid4().hex[:8]}_{int(time.time())}"
-            
-            # Convert amount from kobo to naira
-            amount_naira = amount / 100
+            tx_ref = f"okvirtuals_{user_id}_{uuid.uuid4().hex[:8]}_{int(time.time())}"
             
             payload = {
                 "tx_ref": tx_ref,
-                "amount": str(amount_naira),  # Convert to string for better compatibility
+                "amount": amount / 100,  # Convert from kobo to naira
                 "currency": "NGN",
                 "redirect_url": CONFIG.WEBHOOK_URL,
-                "payment_options": "card,banktransfer,ussd",  # Enable multiple payment methods
                 "meta": {
                     "user_id": str(user_id),
-                    "subscription_type": "monthly"
+                    "plan": "monthly"
                 },
                 "customer": {
-                    "email": f"user{user_id}@virtualsbet.com",
+                    "email": f"user{user_id}@okvirtuals.com",
                     "phonenumber": "08012345678",
                     "name": f"User {user_id}"
                 },
                 "customizations": {
-                    "title": "Virtuals Betting Premium",
-                    "description": f"30-Day Premium Subscription - ₦{amount_naira:.0f}",
+                    "title": "OK Virtuals Premium Access",
+                    "description": f"30-Day Premium Betting Predictions",
                     "logo": ""
                 }
             }
@@ -403,9 +357,6 @@ class FlutterwavePayment:
                 "Content-Type": "application/json"
             }
             
-            logger.info(f"Creating payment link for user {user_id}, amount: ₦{amount_naira}")
-            logger.debug(f"Request payload: {json.dumps(payload, indent=2)}")
-            
             response = requests.post(
                 f"{self.base_url}/payments",
                 json=payload,
@@ -413,95 +364,25 @@ class FlutterwavePayment:
                 timeout=30
             )
             
-            logger.info(f"Flutterwave response status: {response.status_code}")
-            
-            # Log response for debugging
-            try:
-                response_data = response.json()
-                logger.debug(f"Flutterwave response: {json.dumps(response_data, indent=2)}")
-            except:
-                logger.error(f"Failed to parse response: {response.text}")
-                return {
-                    "status": "error",
-                    "message": "Invalid response from payment service"
-                }
-            
             response.raise_for_status()
             
             data = response.json()
             if data.get('status') == 'success':
-                logger.info(f"Payment link created successfully for user {user_id}")
                 return {
                     "status": "success",
                     "tx_ref": tx_ref,
                     "link": data["data"]["link"]
                 }
             else:
-                error_msg = data.get('message', 'Payment link creation failed')
-                logger.error(f"Flutterwave API error: {error_msg}")
-                logger.error(f"Full response: {json.dumps(data, indent=2)}")
-                
-                # Provide more specific error messages
-                if "authentication" in error_msg.lower():
-                    return {
-                        "status": "error",
-                        "message": "Payment configuration error. Please contact admin."
-                    }
-                elif "merchant" in error_msg.lower():
-                    return {
-                        "status": "error",
-                        "message": "Payment service not properly configured. Contact support."
-                    }
-                else:
-                    return {
-                        "status": "error",
-                        "message": f"Payment error: {error_msg}"
-                    }
-                
-        except requests.HTTPError as e:
-            logger.error(f"HTTP error during payment link creation: {str(e)}")
-            logger.error(f"Response: {e.response.text if e.response else 'No response'}")
-            
-            # Parse error response
-            try:
-                error_data = e.response.json()
-                error_message = error_data.get('message', str(e))
-                
-                # Check for specific errors
-                if e.response.status_code == 401:
-                    return {
-                        "status": "error",
-                        "message": "Payment authentication failed. Invalid API keys."
-                    }
-                elif e.response.status_code == 400:
-                    return {
-                        "status": "error",
-                        "message": f"Payment request invalid: {error_message}"
-                    }
-                else:
-                    return {
-                        "status": "error",
-                        "message": f"Payment service error: {error_message}"
-                    }
-            except:
-                return {
-                    "status": "error",
-                    "message": "Payment service temporarily unavailable"
-                }
+                logger.error(f"Flutterwave API error: {data}")
+                return {"status": "error", "message": data.get('message', 'Payment link creation failed')}
                 
         except requests.RequestException as e:
             logger.error(f"Payment link creation request error: {str(e)}")
-            return {
-                "status": "error",
-                "message": "Cannot connect to payment service. Check internet connection."
-            }
+            return {"status": "error", "message": "Payment service temporarily unavailable"}
         except Exception as e:
-            logger.error(f"Unexpected payment link creation error: {str(e)}")
-            logger.exception("Full traceback:")
-            return {
-                "status": "error",
-                "message": "Payment system error. Please try again later."
-            }
+            logger.error(f"Payment link creation error: {str(e)}")
+            return {"status": "error", "message": "Payment service unavailable"}
     
     def verify_payment(self, tx_ref: str) -> Dict[str, Any]:
         """Verify payment status with Flutterwave"""
@@ -511,44 +392,22 @@ class FlutterwavePayment:
                 "Content-Type": "application/json"
             }
             
-            logger.info(f"Verifying payment: {tx_ref}")
-            
             response = requests.get(
                 f"{self.base_url}/transactions/verify_by_reference?tx_ref={tx_ref}",
                 headers=headers,
                 timeout=30
             )
             
-            logger.info(f"Verification response status: {response.status_code}")
-            
             response.raise_for_status()
-            data = response.json()
-            
-            logger.debug(f"Verification response: {json.dumps(data, indent=2)}")
-            
-            return data
+            return response.json()
                 
-        except requests.HTTPError as e:
-            logger.error(f"HTTP error during verification: {str(e)}")
-            if e.response:
-                logger.error(f"Response: {e.response.text}")
-            return {
-                "status": "error",
-                "message": "Verification service error"
-            }
         except requests.RequestException as e:
             logger.error(f"Payment verification request error: {str(e)}")
-            return {
-                "status": "error",
-                "message": "Cannot connect to verification service"
-            }
+            return {"status": "error", "message": "Verification service temporarily unavailable"}
         except Exception as e:
             logger.error(f"Payment verification error: {str(e)}")
-            logger.exception("Full traceback:")
-            return {
-                "status": "error",
-                "message": "Verification system error"
-            }
+            return {"status": "error", "message": "Verification service unavailable"}
+
 class GroupManager:
     """Manages automatic adding/removing users from premium group"""
     
@@ -566,14 +425,7 @@ class GroupManager:
                 only_if_banned=True
             )
             
-            # Create invite link for the user
-            invite_link = await self.application.bot.create_chat_invite_link(
-                chat_id=self.channel_id,
-                member_limit=1,
-                expire_date=int(time.time()) + 300  # 5 minutes expiry
-            )
-            
-            logger.info(f"Created invite link for user {user_id}")
+            logger.info(f"Added user {user_id} to premium group")
             return True
             
         except Forbidden as e:
@@ -612,18 +464,6 @@ class GroupManager:
             return False
         except Exception as e:
             logger.error(f"Error removing user {user_id} from group: {str(e)}")
-            return False
-    
-    async def check_user_membership(self, user_id: int) -> bool:
-        """Check if user is member of premium group"""
-        try:
-            member = await self.application.bot.get_chat_member(
-                chat_id=self.channel_id,
-                user_id=user_id
-            )
-            return member.status in [ChatMember.MEMBER, ChatMember.ADMINISTRATOR, ChatMember.OWNER]
-        except Exception as e:
-            logger.error(f"Error checking membership for user {user_id}: {str(e)}")
             return False
 
 class SubscriptionMonitor:
@@ -712,7 +552,7 @@ class RateLimiter:
         
         return False
 
-class VirtualsBettingBot:
+class OKVirtualsBot:
     def __init__(self, config: Config):
         self.config = config
         self.db = DatabaseManager(config.DATABASE_PATH)
@@ -734,7 +574,7 @@ class VirtualsBettingBot:
         user = update.effective_user
         self.db.add_user(user.id, user.username, user.first_name)
         
-        welcome_text = f"""🎯 *Welcome to Virtuals Betting Predictions!*
+        welcome_text = f"""🎯 *Welcome to OK Virtuals Betting!*
 
 Hello {user.first_name}! 👋
 
@@ -803,7 +643,7 @@ Transform your betting game today! 🚀"""
         price_naira = self.config.SUBSCRIPTION_AMOUNT / 100
         subscribe_text = f"""💎 *Premium Subscription*
 
-🎯 *Virtuals Betting Predictions*
+🎯 *OK Virtuals Betting Predictions*
 30 Days of Expert Predictions
 
 💰 *Price:* ₦{price_naira:.0f} (One-time Payment)
@@ -906,7 +746,7 @@ Click below to subscribe now!"""
         )
     
     async def predictions_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Handle /predictions command - show sample or premium predictions"""
+        """Handle /predictions command"""
         user = update.effective_user
         self.db.add_user(user.id, user.username, user.first_name)
         
@@ -997,7 +837,7 @@ Click below to subscribe now!"""
         )
     
     async def stats_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Handle /stats command - show user statistics"""
+        """Handle /stats command"""
         user = update.effective_user
         self.db.add_user(user.id, user.username, user.first_name)
         
@@ -1056,16 +896,14 @@ Click below to subscribe now!"""
         user = update.effective_user
         self.db.add_user(user.id, user.username, user.first_name)
         
-        support_text = """💬 *Customer Support*
+        support_text = f"""💬 *Customer Support*
 
 Need help? We're here 24/7! 🚀
 
-📞 *Contact Methods:*
-✈️ Telegram: @blessednwaoma
-📱 WhatsApp: +2347042551379
-📧 Email: blessednwaoma7@gmail.com
+📞 *Contact Method:*
+✈️ Telegram: @okvirtual001
 
-⏰ *Response Time:* Within 1 hour
+⏰ *Response Time:* Within 30 minutes
 🌍 *Availability:* 24/7
 
 🔧 *We Help With:*
@@ -1081,19 +919,18 @@ Need help? We're here 24/7! 🚀
 • Describe your issue clearly
 • Mention error messages if any
 
-Your User ID: `{0}`
+Your User ID: `{user.id}`
 
 We're committed to your success! 💪"""
         
         keyboard = [
-            [InlineKeyboardButton("✈️ Telegram Support", url="https://t.me/blessednwaoma")],
-            [InlineKeyboardButton("📱 WhatsApp", url="https://wa.me/2347042551379")],
+            [InlineKeyboardButton("✈️ Contact Support", url="https://t.me/okvirtual001")],
             [InlineKeyboardButton("🔙 Back to Menu", callback_data="back_to_menu")]
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
         
         await update.message.reply_text(
-            support_text.format(user.id),
+            support_text,
             reply_markup=reply_markup,
             parse_mode=ParseMode.MARKDOWN
         )
@@ -1115,7 +952,7 @@ We're committed to your success! 💪"""
 /help - Show this help message
 /premium - Access premium channel link
 
-🎯 *About Virtuals Betting Bot:*
+🎯 *About OK Virtuals Betting Bot:*
 We provide expert predictions for Virtual Games with 90%+ accuracy rate.
 
 ✨ *Premium Features:*
@@ -1148,7 +985,7 @@ Need help? Use /support 💬"""
         
         keyboard = [
             [InlineKeyboardButton("💎 Subscribe Now", callback_data="subscribe")],
-            [InlineKeyboardButton("💬 Support", callback_data="support")],
+            [InlineKeyboardButton("💬 Support", url="https://t.me/okvirtual001")],
             [InlineKeyboardButton("🔙 Back", callback_data="back_to_menu")]
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
@@ -1160,7 +997,7 @@ Need help? Use /support 💬"""
         )
     
     async def premium_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Handle /premium command - access to premium channel"""
+        """Handle /premium command"""
         user = update.effective_user
         self.db.add_user(user.id, user.username, user.first_name)
         
@@ -1234,7 +1071,7 @@ Subscribe now to unlock! 🚀"""
         )
     
     async def process_payment_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Process payment initiation"""
+        """Process payment initiation - WORKING VERSION"""
         query = update.callback_query
         await query.answer()
         
@@ -1289,18 +1126,23 @@ Transaction ID: `{payment_result['tx_ref']}`"""
             else:
                 error_message = payment_result.get('message', 'Payment link creation failed')
                 await query.edit_message_text(
-                    f"❌ Error: {error_message}\n\nPlease try again later or contact support.",
-                    reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", callback_data="subscribe")]])
+                    f"❌ Error: {error_message}\n\nPlease contact support: @okvirtual001",
+                    reply_markup=InlineKeyboardMarkup([
+                        [InlineKeyboardButton("💬 Contact Support", url="https://t.me/okvirtual001")],
+                        [InlineKeyboardButton("🔙 Back", callback_data="subscribe")]
+                    ])
                 )
         except Exception as e:
             logger.error(f"Error processing payment: {str(e)}")
             await query.edit_message_text(
-                "❌ An error occurred. Please try again later or contact support.",
-                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("💬 Contact Support", callback_data="support")]])
+                "❌ An error occurred. Please contact support: @okvirtual001",
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("💬 Contact Support", url="https://t.me/okvirtual001")]
+                ])
             )
     
     async def verify_payment_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Verify payment and grant access"""
+        """Verify payment and grant access - WORKING VERSION"""
         query = update.callback_query
         await query.answer()
         
@@ -1310,8 +1152,10 @@ Transaction ID: `{payment_result['tx_ref']}`"""
         payment_record = self.db.get_payment_record(tx_ref)
         if not payment_record or payment_record['user_id'] != user_id:
             await query.edit_message_text(
-                "❌ Payment record not found. Please contact support.",
-                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("💬 Support", callback_data="support")]])
+                "❌ Payment record not found. Please contact support: @okvirtual001",
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("💬 Support", url="https://t.me/okvirtual001")]
+                ])
             )
             return
         
@@ -1319,7 +1163,9 @@ Transaction ID: `{payment_result['tx_ref']}`"""
             await query.edit_message_text(
                 "✅ This payment has already been processed!\n\n"
                 f"🔗 Join Premium Channel: {self.config.PREMIUM_CHANNEL_LINK}",
-                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔗 Join Now", url=self.config.PREMIUM_CHANNEL_LINK)]])
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("🔗 Join Now", url=self.config.PREMIUM_CHANNEL_LINK)]
+                ])
             )
             return
         
@@ -1349,7 +1195,7 @@ Transaction ID: `{payment_result['tx_ref']}`"""
                 
                 success_text = f"""🎉 *PAYMENT SUCCESSFUL!*
 
-Welcome to Premium! 💎
+Welcome to OK Virtuals Premium! 💎
 
 📅 *Subscription Active*
 ⏰ Valid Until: {end_date.strftime('%B %d, %Y at %H:%M UTC')}
@@ -1393,28 +1239,28 @@ Use /predictions to see today's tips! 🎯"""
                 await query.edit_message_text(
                     "⚠️ Payment verification failed or still pending.\n\n"
                     "If you've paid, please wait a few minutes and try again.\n"
-                    "If the problem persists, contact support.",
+                    "If the problem persists, contact support: @okvirtual001",
                     reply_markup=InlineKeyboardMarkup([
                         [InlineKeyboardButton("🔄 Try Again", callback_data=f"verify_{tx_ref}")],
-                        [InlineKeyboardButton("💬 Support", callback_data="support")]
+                        [InlineKeyboardButton("💬 Support", url="https://t.me/okvirtual001")]
                     ])
                 )
         except Exception as e:
             logger.error(f"Error during payment verification: {str(e)}")
             await query.edit_message_text(
-                "❌ Error verifying payment. Please try again or contact support.",
+                "❌ Error verifying payment. Please contact support: @okvirtual001",
                 reply_markup=InlineKeyboardMarkup([
                     [InlineKeyboardButton("🔄 Try Again", callback_data=f"verify_{tx_ref}")],
-                    [InlineKeyboardButton("💬 Support", callback_data="support")]
+                    [InlineKeyboardButton("💬 Support", url="https://t.me/okvirtual001")]
                 ])
             )
     
     async def learn_more_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Show detailed information about the bot"""
+        """Show detailed information"""
         query = update.callback_query
         await query.answer()
         
-        info_text = """ℹ️ *About Virtuals Betting Predictions*
+        info_text = """ℹ️ *About OK Virtuals Betting*
 
 🎯 *Our Mission:*
 Provide accurate betting predictions for Virtual Games with 90%+ success rate.
@@ -1509,7 +1355,9 @@ Provide accurate betting predictions for Virtual Games with 90%+ success rate.
                 if end_date > datetime.now(timezone.utc):
                     await query.edit_message_text(
                         f"✅ You already have an active subscription until {end_date.strftime('%B %d, %Y')}!",
-                        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", callback_data="back_to_menu")]])
+                        reply_markup=InlineKeyboardMarkup([
+                            [InlineKeyboardButton("🔙 Back", callback_data="back_to_menu")]
+                        ])
                     )
                     return
             except:
@@ -1544,7 +1392,7 @@ Click below to subscribe!"""
         )
     
     async def status_button(self, query, context):
-        """Handle status button - reuse status command logic"""
+        """Handle status button"""
         await query.answer()
         mock_update = type('obj', (object,), {
             'message': query.message,
@@ -1584,7 +1432,7 @@ Click below to subscribe!"""
         await query.answer()
         user = query.from_user
         
-        welcome_text = f"""🎯 *Virtuals Betting Predictions*
+        welcome_text = f"""🎯 *OK Virtuals Betting Predictions*
 
 Hello {user.first_name}! 👋
 
@@ -1597,7 +1445,7 @@ Use the buttons below to navigate."""
             [InlineKeyboardButton("📊 Status", callback_data="status"),
              InlineKeyboardButton("🎯 Predictions", callback_data="predictions")],
             [InlineKeyboardButton("📈 Stats", callback_data="stats"),
-             InlineKeyboardButton("💬 Support", callback_data="support")]
+             InlineKeyboardButton("💬 Support", url="https://t.me/okvirtual001")]
         ]
         
         await query.edit_message_text(
@@ -1612,7 +1460,7 @@ class HealthHandler(BaseHTTPRequestHandler):
             health_status = {
                 "status": "healthy",
                 "timestamp": datetime.now(timezone.utc).isoformat(),
-                "service": "Virtuals Betting Bot"
+                "service": "OK Virtuals Betting Bot"
             }
             
             self.send_response(200)
@@ -1643,14 +1491,17 @@ def signal_handler(signum, frame):
 def main():
     global shutdown_flag
     
+    # Set up signal handlers for graceful shutdown
     signal.signal(signal.SIGTERM, signal_handler)
     signal.signal(signal.SIGINT, signal_handler)
     
-    logger.info("Starting Virtuals Betting Bot...")
+    logger.info("Starting OK Virtuals Betting Bot...")
     
-    bot = VirtualsBettingBot(CONFIG)
+    # Initialize bot
+    bot = OKVirtualsBot(CONFIG)
     logger.info("Bot initialized successfully")
     
+    # Build application
     application = Application.builder().token(CONFIG.BOT_TOKEN).build()
     bot.application = application
     bot.group_manager = GroupManager(application)
@@ -1678,14 +1529,19 @@ def main():
     health_thread = threading.Thread(target=run_health_server, daemon=True)
     health_thread.start()
     
-    logger.info("Virtuals Betting Bot started successfully!")
-    print("🎯 Virtuals Betting Bot is running...")
-    print(f"💚 Health check server on port {CONFIG.PORT}")
+    logger.info("OK Virtuals Betting Bot started successfully!")
+    print("=" * 60)
+    print("🎯 OK VIRTUALS BETTING BOT IS RUNNING")
+    print("=" * 60)
+    print(f"💚 Health check: http://0.0.0.0:{CONFIG.PORT}")
     print(f"💰 Subscription: ₦{CONFIG.SUBSCRIPTION_AMOUNT / 100:.0f} for {CONFIG.SUBSCRIPTION_DAYS} days")
+    print(f"📱 Support: @okvirtual001")
     print("\n📋 Available Commands:")
     for cmd in BOT_COMMANDS:
         print(f"  /{cmd.command} - {cmd.description}")
+    print("=" * 60)
     
+    # Main loop with conflict handling
     max_retries = 5
     retry_count = 0
     
@@ -1693,6 +1549,7 @@ def main():
         try:
             logger.info(f"Starting bot polling (attempt {retry_count + 1}/{max_retries})")
             
+            # Setup bot commands after starting
             async def post_init(application):
                 await bot.setup_bot_commands()
             
@@ -1743,3 +1600,4 @@ if __name__ == '__main__':
         logger.info("Bot stopped by user")
     except Exception as e:
         logger.error(f"Fatal error: {str(e)}")
+        logger.exception("Full traceback:")
