@@ -833,12 +833,11 @@ class OKVirtualsBot:
 Hello {user.first_name}! 👋
 
 🔥 *What We Offer:*
-✅ Daily Sure Bet Predictions
-✅ 90%+ Accuracy Rate
-✅ Expert Analysis
-✅ Real-time Tips
-✅ VIP Community
 
+✅100% ACCURACY 
+✅VIRTUAL EXPERT
+✅REAL TIME TIP
+✅COMMUNITY FOR EXPERTS
 💰 *Subscribe:* ₦{self.config.SUBSCRIPTION_AMOUNT / 100:.0f}/month"""
         
         keyboard = [
@@ -1095,7 +1094,7 @@ Your User ID: `{user.id}`"""
 🔗 *Your Invite Link:*
 {invite_link}
 
-⚠️ Link expires in 1 hours
+⚠️ Link expires in 24 hours
 📅 Valid until: {end_date.strftime('%B %d, %Y')}"""
                         
                         keyboard = [[InlineKeyboardButton("🔗 Join Now", url=invite_link)]]
