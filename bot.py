@@ -1746,7 +1746,7 @@ class WebhookHandler(BaseHTTPRequestHandler):
                             </div>
                         </div>
                         
-                        <a href="https://t.me/{bot_username}" class="btn">
+                        <a href="https://t.me/okvirtualbot" class="btn">
                             ↩️ Return to Bot
                         </a>
                         
