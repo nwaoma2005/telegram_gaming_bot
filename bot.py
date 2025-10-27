@@ -1095,7 +1095,7 @@ Your User ID: `{user.id}`"""
 🔗 *Your Invite Link:*
 {invite_link}
 
-⚠️ Link expires in 24 hours
+⚠️ Link expires in 1 hours
 📅 Valid until: {end_date.strftime('%B %d, %Y')}"""
                         
                         keyboard = [[InlineKeyboardButton("🔗 Join Now", url=invite_link)]]
