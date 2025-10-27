@@ -1566,9 +1566,9 @@ class WebhookHandler(BaseHTTPRequestHandler):
                             </div>
                         </div>
                         
-                        <div class="price">₦{CONFIG.SUBSCRIPTION_AMOUNT / 100:.0f} / Month</div>
+                        <div class="price">₦{CONFIG.SUBSCRIPTION_AMOUNT / 10000:.0f} / Month</div>
                         
-                        <a href="https://t.me/{bot_username}" class="btn">
+                        <a href="https://t.me/okvirtualbot" class="btn">
                             🚀 Start Winning Now
                         </a>
                         
@@ -1580,7 +1580,7 @@ class WebhookHandler(BaseHTTPRequestHandler):
                         
                         <div class="footer">
                             <p>Need help? Contact <a href="https://t.me/okvirtual001" style="color: #667eea;">@okvirtual001</a></p>
-                            <p style="margin-top: 10px;">© 2024 OK Virtuals. All rights reserved.</p>
+                            <p style="margin-top: 10px;">© 2025 OK Virtuals. All rights reserved.</p>
                         </div>
                     </div>
                 </body>
