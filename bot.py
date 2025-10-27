@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-OK Virtuals Betting Prediction Bot - COMPLETE WORKING VERSION
-All features fully implemented and tested
+OK Virtuals Betting Prediction Bot - PAYSTACK VERSION
+All features fully implemented with Paystack payment integration
 """
 import os
 import logging
@@ -14,6 +14,8 @@ import sys
 import time
 import requests
 import uuid
+import hmac
+import hashlib
 from datetime import datetime, timezone, timedelta
 from typing import Optional, Dict, Any, List
 from contextlib import contextmanager
@@ -40,9 +42,8 @@ bot_application = None
 @dataclass
 class Config:
     BOT_TOKEN: str
-    FLUTTERWAVE_SECRET_KEY: str
-    FLUTTERWAVE_PUBLIC_KEY: str
-    FLUTTERWAVE_WEBHOOK_SECRET: str
+    PAYSTACK_SECRET_KEY: str
+    PAYSTACK_PUBLIC_KEY: str
     PREMIUM_CHANNEL_ID: str
     PREMIUM_CHANNEL_USERNAME: str
     DATABASE_PATH: str = "./okvirtuals_bot.db"
@@ -56,9 +57,8 @@ class Config:
 def load_config() -> Config:
     config = Config(
         BOT_TOKEN=os.getenv("BOT_TOKEN", ""),
-        FLUTTERWAVE_SECRET_KEY=os.getenv("FLUTTERWAVE_SECRET_KEY", ""),
-        FLUTTERWAVE_PUBLIC_KEY=os.getenv("FLUTTERWAVE_PUBLIC_KEY", ""),
-        FLUTTERWAVE_WEBHOOK_SECRET=os.getenv("FLUTTERWAVE_WEBHOOK_SECRET", ""),
+        PAYSTACK_SECRET_KEY=os.getenv("PAYSTACK_SECRET_KEY", ""),
+        PAYSTACK_PUBLIC_KEY=os.getenv("PAYSTACK_PUBLIC_KEY", ""),
         PREMIUM_CHANNEL_ID=os.getenv("PREMIUM_CHANNEL_ID", ""),
         PREMIUM_CHANNEL_USERNAME=os.getenv("PREMIUM_CHANNEL_USERNAME", ""),
         DATABASE_PATH=os.getenv("DATABASE_PATH", "./okvirtuals_bot.db"),
@@ -72,6 +72,8 @@ def load_config() -> Config:
     
     if not config.BOT_TOKEN:
         raise ValueError("BOT_TOKEN is required")
+    if not config.PAYSTACK_SECRET_KEY:
+        raise ValueError("PAYSTACK_SECRET_KEY is required")
     
     return config
 
@@ -148,7 +150,7 @@ class DatabaseManager:
                         amount REAL,
                         status TEXT DEFAULT 'pending',
                         payment_method TEXT,
-                        flutterwave_id TEXT,
+                        paystack_id TEXT,
                         created_at TEXT DEFAULT CURRENT_TIMESTAMP,
                         completed_at TEXT,
                         FOREIGN KEY (user_id) REFERENCES users (user_id)
@@ -343,15 +345,15 @@ class DatabaseManager:
             logger.error(f"Error adding payment record: {str(e)}")
             raise
     
-    def update_payment_status(self, transaction_ref: str, status: str, flutterwave_id: str = None):
+    def update_payment_status(self, transaction_ref: str, status: str, paystack_id: str = None):
         try:
             with self.get_connection() as conn:
                 cursor = conn.cursor()
                 cursor.execute('''
                     UPDATE payments 
-                    SET status = ?, completed_at = ?, flutterwave_id = ?
+                    SET status = ?, completed_at = ?, paystack_id = ?
                     WHERE transaction_ref = ?
-                ''', (status, datetime.now(timezone.utc).isoformat(), flutterwave_id, transaction_ref))
+                ''', (status, datetime.now(timezone.utc).isoformat(), paystack_id, transaction_ref))
                 conn.commit()
                 
         except Exception as e:
@@ -463,85 +465,147 @@ class DatabaseManager:
             logger.error(f"Error getting admin stats: {str(e)}")
             return {}
 
-class FlutterwavePayment:
+class PaystackPayment:
     def __init__(self, secret_key: str, public_key: str):
-        self.base_url = "https://api.flutterwave.com/v3"
+        self.base_url = "https://api.paystack.co"
         self.secret_key = secret_key
         self.public_key = public_key
+        self.headers = {
+            "Authorization": f"Bearer {secret_key}",
+            "Content-Type": "application/json"
+        }
     
     def create_payment_link(self, user_id: int, amount: float) -> Dict[str, Any]:
         try:
             tx_ref = f"okvirtuals_{user_id}_{uuid.uuid4().hex[:8]}_{int(time.time())}"
             
-            payload = {
-                "tx_ref": tx_ref,
-                "amount": amount / 100,
-                "currency": "NGN",
-                "redirect_url": f"{CONFIG.WEBHOOK_URL}?status=successful",
-                "meta": {
-                    "user_id": str(user_id),
-                    "plan": "monthly"
-                },
-                "customer": {
-                    "email": f"user{user_id}@okvirtuals.com",
-                    "phonenumber": "08000000000",
-                    "name": f"User {user_id}"
-                },
-                "customizations": {
-                    "title": "OK Virtuals Premium Access",
-                    "description": "30-Day Premium Betting Predictions",
-                    "logo": ""
-                }
-            }
+            amount_in_kobo = int(amount)
             
-            headers = {
-                "Authorization": f"Bearer {self.secret_key}",
-                "Content-Type": "application/json"
+            payload = {
+                "reference": tx_ref,
+                "amount": amount_in_kobo,
+                "email": f"user{user_id}@okvirtuals.com",
+                "currency": "NGN",
+                "callback_url": f"{CONFIG.WEBHOOK_URL}/payment/callback",
+                "metadata": {
+                    "user_id": str(user_id),
+                    "plan": "monthly",
+                    "custom_fields": [
+                        {
+                            "display_name": "User ID",
+                            "variable_name": "user_id",
+                            "value": str(user_id)
+                        }
+                    ]
+                },
+                "channels": ["card", "bank", "ussd", "qr", "mobile_money", "bank_transfer"]
             }
             
             response = requests.post(
-                f"{self.base_url}/payments",
+                f"{self.base_url}/transaction/initialize",
                 json=payload,
-                headers=headers,
+                headers=self.headers,
                 timeout=30
             )
             
             response.raise_for_status()
             data = response.json()
             
-            if data.get('status') == 'success':
+            if data.get('status') and data.get('data'):
                 return {
                     "status": "success",
                     "tx_ref": tx_ref,
-                    "link": data["data"]["link"]
+                    "link": data["data"]["authorization_url"],
+                    "access_code": data["data"]["access_code"]
                 }
             else:
-                logger.error(f"Flutterwave API error: {data}")
-                return {"status": "error", "message": data.get('message', 'Payment link creation failed')}
+                logger.error(f"Paystack API error: {data}")
+                return {
+                    "status": "error", 
+                    "message": data.get('message', 'Payment link creation failed')
+                }
                 
-        except Exception as e:
+        except requests.exceptions.RequestException as e:
             logger.error(f"Payment link creation error: {str(e)}")
-            return {"status": "error", "message": "Payment service unavailable"}
+            return {
+                "status": "error", 
+                "message": "Payment service temporarily unavailable"
+            }
+        except Exception as e:
+            logger.error(f"Unexpected error in payment link creation: {str(e)}")
+            return {
+                "status": "error", 
+                "message": "An error occurred while creating payment link"
+            }
     
     def verify_payment(self, tx_ref: str) -> Dict[str, Any]:
         try:
-            headers = {
-                "Authorization": f"Bearer {self.secret_key}",
-                "Content-Type": "application/json"
-            }
-            
             response = requests.get(
-                f"{self.base_url}/transactions/verify_by_reference?tx_ref={tx_ref}",
-                headers=headers,
+                f"{self.base_url}/transaction/verify/{tx_ref}",
+                headers=self.headers,
                 timeout=30
             )
             
             response.raise_for_status()
-            return response.json()
+            data = response.json()
+            
+            if data.get('status') and data.get('data'):
+                transaction_data = data['data']
                 
-        except Exception as e:
+                if transaction_data.get('status') == 'success':
+                    return {
+                        "status": "success",
+                        "data": {
+                            "status": "successful",
+                            "id": transaction_data.get('id'),
+                            "reference": transaction_data.get('reference'),
+                            "amount": transaction_data.get('amount'),
+                            "currency": transaction_data.get('currency'),
+                            "customer": transaction_data.get('customer'),
+                            "paid_at": transaction_data.get('paid_at')
+                        }
+                    }
+                else:
+                    return {
+                        "status": "pending",
+                        "data": {
+                            "status": transaction_data.get('status'),
+                            "reference": transaction_data.get('reference')
+                        }
+                    }
+            else:
+                logger.error(f"Paystack verification error: {data}")
+                return {
+                    "status": "error",
+                    "message": data.get('message', 'Verification failed')
+                }
+                
+        except requests.exceptions.RequestException as e:
             logger.error(f"Payment verification error: {str(e)}")
-            return {"status": "error", "message": "Verification service unavailable"}
+            return {
+                "status": "error",
+                "message": "Verification service temporarily unavailable"
+            }
+        except Exception as e:
+            logger.error(f"Unexpected verification error: {str(e)}")
+            return {
+                "status": "error",
+                "message": "An error occurred during verification"
+            }
+    
+    def verify_webhook_signature(self, request_signature: str, payload: str) -> bool:
+        try:
+            computed_signature = hmac.new(
+                self.secret_key.encode('utf-8'),
+                payload.encode('utf-8'),
+                hashlib.sha512
+            ).hexdigest()
+            
+            return hmac.compare_digest(computed_signature, request_signature)
+            
+        except Exception as e:
+            logger.error(f"Signature verification error: {str(e)}")
+            return False
 
 class GroupManager:
     def __init__(self, application: Application):
@@ -743,7 +807,7 @@ class OKVirtualsBot:
     def __init__(self, config: Config):
         self.config = config
         self.db = DatabaseManager(config.DATABASE_PATH)
-        self.payment = FlutterwavePayment(config.FLUTTERWAVE_SECRET_KEY, config.FLUTTERWAVE_PUBLIC_KEY)
+        self.payment = PaystackPayment(config.PAYSTACK_SECRET_KEY, config.PAYSTACK_PUBLIC_KEY)
         self.rate_limiter = RateLimiter()
         self.application = None
         self.group_manager = None
@@ -1335,7 +1399,7 @@ class WebhookHandler(BaseHTTPRequestHandler):
                 health_status = {
                     "status": "healthy",
                     "timestamp": datetime.now(timezone.utc).isoformat(),
-                    "service": "OK Virtuals Bot"
+                    "service": "OK Virtuals Bot (Paystack)"
                 }
                 
                 self.send_response(200)
@@ -1353,22 +1417,33 @@ class WebhookHandler(BaseHTTPRequestHandler):
     
     def do_POST(self):
         try:
-            if self.path.startswith('/webhook/flutterwave'):
+            if self.path.startswith('/webhook/paystack'):
                 content_length = int(self.headers['Content-Length'])
                 post_data = self.rfile.read(content_length)
                 
-                signature = self.headers.get('verif-hash', '')
+                signature = self.headers.get('x-paystack-signature', '')
                 
-                if signature == CONFIG.FLUTTERWAVE_WEBHOOK_SECRET:
+                payment = PaystackPayment(CONFIG.PAYSTACK_SECRET_KEY, CONFIG.PAYSTACK_PUBLIC_KEY)
+                if payment.verify_webhook_signature(signature, post_data.decode('utf-8')):
                     webhook_data = json.loads(post_data.decode('utf-8'))
-                    logger.info(f"Webhook received: {webhook_data.get('event')}")
+                    event = webhook_data.get('event')
+                    
+                    logger.info(f"Paystack webhook received: {event}")
+                    
+                    if event == 'charge.success':
+                        data = webhook_data.get('data', {})
+                        reference = data.get('reference')
+                        status = data.get('status')
+                        
+                        if reference and status == 'success':
+                            logger.info(f"Payment successful via webhook: {reference}")
                     
                     self.send_response(200)
                     self.send_header('Content-type', 'application/json')
                     self.end_headers()
                     self.wfile.write(json.dumps({"status": "success"}).encode())
                 else:
-                    logger.warning("Invalid webhook signature")
+                    logger.warning("Invalid Paystack webhook signature")
                     self.send_response(401)
                     self.end_headers()
             else:
@@ -1402,7 +1477,7 @@ def main():
     signal.signal(signal.SIGTERM, signal_handler)
     signal.signal(signal.SIGINT, signal_handler)
     
-    logger.info("Starting OK Virtuals Betting Bot...")
+    logger.info("Starting OK Virtuals Betting Bot (Paystack)...")
     
     bot = OKVirtualsBot(CONFIG)
     logger.info("Bot initialized")
@@ -1431,11 +1506,12 @@ def main():
     
     logger.info("✅ OK Virtuals Betting Bot Started!")
     print("=" * 50)
-    print("🎯 OK VIRTUALS BOT RUNNING")
+    print("🎯 OK VIRTUALS BOT RUNNING (PAYSTACK)")
     print("=" * 50)
     print(f"💚 Health: http://0.0.0.0:{CONFIG.PORT}/health")
     print(f"💰 Price: ₦{CONFIG.SUBSCRIPTION_AMOUNT / 100:.0f}")
     print(f"📱 Support: @okvirtual001")
+    print(f"💳 Payment: Paystack")
     print("=" * 50)
     
     max_retries = 5
