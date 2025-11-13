@@ -740,7 +740,7 @@ class SubscriptionMonitor:
                         
         except Exception as e:
             logger.error(f"Error sending reminders: {str(e)}")
-    async def handle_email_input(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def handle_email_input(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
     if context.user_data.get('awaiting_email'):
         email = update.message.text.strip()
         
