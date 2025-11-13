@@ -740,7 +740,27 @@ class SubscriptionMonitor:
                         
         except Exception as e:
             logger.error(f"Error sending reminders: {str(e)}")
-    
+    async def handle_email_input(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if context.user_data.get('awaiting_email'):
+        email = update.message.text.strip()
+        
+        # Validate email format
+        if '@' in email and '.' in email:
+            user_id = update.effective_user.id
+            
+            # Save email to database
+            self.db.update_user_email(user_id, email)
+            
+            # Now create payment with REAL email
+            payment_result = self.payment.create_payment_link(
+                user_id, 
+                email,  # Use the real email here
+                self.config.SUBSCRIPTION_AMOUNT
+            )
+            
+            # Rest of payment code...
+        else:
+            await update.message.reply_text("❌ Invalid email. Please enter a valid email address.")
     async def _send_expiry_notification(self, user_id: int):
         try:
             if bot_application:
@@ -1134,8 +1154,14 @@ Subscribe to get access!
         await query.edit_message_text("⏳ Creating payment link...")
         
         try:
-            payment_result = self.payment.create_payment_link(user_id, self.config.SUBSCRIPTION_AMOUNT)
-            
+            # First, ask for email
+await query.edit_message_text(
+    "📧 *Enter Your Email Address*\n\n"
+    "Please enter your valid email address to proceed with payment:",
+    parse_mode=ParseMode.MARKDOWN
+)
+# Store that we're waiting for email input
+context.user_data['awaiting_email'] = True
             if payment_result['status'] == 'success':
                 self.db.add_payment_record(user_id, payment_result['tx_ref'], self.config.SUBSCRIPTION_AMOUNT)
                 
