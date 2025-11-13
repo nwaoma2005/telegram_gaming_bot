@@ -1160,6 +1160,9 @@ try:
     "Please enter your valid email address to proceed with payment:",
     parse_mode=ParseMode.MARKDOWN
 )
+except Exception as e:
+    await query.edit_message_text("❌ An error occurred while processing your request. Please try again.")
+    print(f"[process_payment_callback] Error: {e}")
 # Store that we're waiting for email input
 context.user_data['awaiting_email'] = True
             if payment_result['status'] == 'success':
@@ -1191,6 +1194,7 @@ Transaction: `{payment_result['tx_ref']}`"""
                     reply_markup=reply_markup,
                     parse_mode=ParseMode.MARKDOWN
                 )
+            
             else:
                 await query.edit_message_text(
                     f"❌ Error: {payment_result.get('message', 'Failed')}\n\nContact: @okvirtual001"
