@@ -1153,9 +1153,9 @@ Subscribe to get access!
         
         await query.edit_message_text("⏳ Creating payment link...")
         
-        try:
+try:
             # First, ask for email
-await query.edit_message_text(
+    await query.edit_message_text(
     "📧 *Enter Your Email Address*\n\n"
     "Please enter your valid email address to proceed with payment:",
     parse_mode=ParseMode.MARKDOWN
@@ -1166,6 +1166,7 @@ context.user_data['awaiting_email'] = True
                 self.db.add_payment_record(user_id, payment_result['tx_ref'], self.config.SUBSCRIPTION_AMOUNT)
                 
                 payment_text = f"""💳 *Payment Details*
+                
 
 💰 Amount: ₦{self.config.SUBSCRIPTION_AMOUNT / 100:.0f}
 ⏰ Duration: 30 Days
