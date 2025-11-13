@@ -1165,7 +1165,7 @@ except Exception as e:
     print(f"[process_payment_callback] Error: {e}")
 # Store that we're waiting for email input
 context.user_data['awaiting_email'] = True
-            if payment_result['status'] == 'success':
+    if payment_result['status'] == 'success':
                 self.db.add_payment_record(user_id, payment_result['tx_ref'], self.config.SUBSCRIPTION_AMOUNT)
                 
                 payment_text = f"""💳 *Payment Details*
