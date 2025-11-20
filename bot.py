@@ -54,7 +54,7 @@ class Config:
     PORT: int = 10000
     WEBHOOK_URL: str = ""
     ADMIN_USER_IDS: str = ""
-    SUBSCRIPTION_AMOUNT: int = 28000  # ✅ FIXED: Changed from 10000 to 28000 (₦280)
+    SUBSCRIPTION_AMOUNT: int = 3000  # ✅ FIXED: Changed from 10000 to 300000 (₦3000)
     SUBSCRIPTION_DAYS: int = 30
     REMINDER_DAYS: str = "7,3,1"
 
@@ -69,7 +69,7 @@ def load_config() -> Config:
         PORT=int(os.getenv("PORT", 10000)),
         WEBHOOK_URL=os.getenv("WEBHOOK_URL", ""),
         ADMIN_USER_IDS=os.getenv("ADMIN_USER_IDS", ""),
-        SUBSCRIPTION_AMOUNT=int(os.getenv("SUBSCRIPTION_AMOUNT", 28000)),
+        SUBSCRIPTION_AMOUNT=int(os.getenv("SUBSCRIPTION_AMOUNT", 3000)),
         SUBSCRIPTION_DAYS=int(os.getenv("SUBSCRIPTION_DAYS", 30)),
         REMINDER_DAYS=os.getenv("REMINDER_DAYS", "7,3,1")
     )
