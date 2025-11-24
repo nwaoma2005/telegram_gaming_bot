@@ -50,7 +50,7 @@ class Config:
     PORT: int = 10000
     WEBHOOK_URL: str = ""
     ADMIN_USER_IDS: str = ""
-    SUBSCRIPTION_AMOUNT: int = 10000
+    SUBSCRIPTION_AMOUNT: int = 300000
     SUBSCRIPTION_DAYS: int = 30
     REMINDER_DAYS: str = "7,3,1"
 
