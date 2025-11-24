@@ -65,7 +65,7 @@ def load_config() -> Config:
         PORT=int(os.getenv("PORT", 10000)),
         WEBHOOK_URL=os.getenv("WEBHOOK_URL", ""),
         ADMIN_USER_IDS=os.getenv("ADMIN_USER_IDS", ""),
-        SUBSCRIPTION_AMOUNT=int(os.getenv("SUBSCRIPTION_AMOUNT", 3000)),
+        SUBSCRIPTION_AMOUNT=int(os.getenv("SUBSCRIPTION_AMOUNT", 10000)),
         SUBSCRIPTION_DAYS=int(os.getenv("SUBSCRIPTION_DAYS", 30)),
         REMINDER_DAYS=os.getenv("REMINDER_DAYS", "7,3,1")
     )
@@ -243,7 +243,7 @@ class DatabaseManager:
                     (user_id, start_date, end_date, amount, status, is_renewal)
                     VALUES (?, ?, ?, ?, 'active', ?)
                 ''', (user_id, start_date.isoformat(), end_date.isoformat(), 
-                     CONFIG.SUBSCRIPTION_AMOUNT / 3000, 1 if is_renewal else 0))
+                     CONFIG.SUBSCRIPTION_AMOUNT / 100, 1 if is_renewal else 0))
                 
                 conn.commit()
                 logger.info(f"Subscription updated for user {user_id}")
@@ -456,7 +456,7 @@ class DatabaseManager:
                 return {
                     'total_users': total_users,
                     'active_subscriptions': active_subs,
-                    'total_revenue': total_revenue / 3000,
+                    'total_revenue': total_revenue / 100,
                     'today_subscriptions': today_subs,
                     'expiring_soon': expiring_soon
                 }
@@ -749,7 +749,7 @@ class SubscriptionMonitor:
 Your premium subscription has expired.
 
 💎 *Renew Now:*
-Only ₦{CONFIG.SUBSCRIPTION_AMOUNT / 3000:.0f} for 30 more days!
+Only ₦{CONFIG.SUBSCRIPTION_AMOUNT / 100:.0f} for 30 more days!
 
 Use /subscribe to renew."""
 
@@ -770,7 +770,7 @@ Use /subscribe to renew."""
 Your premium subscription expires in *{days_remaining} day{"s" if days_remaining > 1 else ""}*!
 
 💎 *Renew Now:*
-Only ₦{CONFIG.SUBSCRIPTION_AMOUNT / 3000:.0f} for 30 more days!
+Only ₦{CONFIG.SUBSCRIPTION_AMOUNT / 100:.0f} for 30 more days!
 
 Use /subscribe to renew."""
 
@@ -833,12 +833,13 @@ class OKVirtualsBot:
 Hello {user.first_name}! 👋
 
 🔥 *What We Offer:*
+✅ Daily Sure Bet Predictions
+✅ 90%+ Accuracy Rate
+✅ Expert Analysis
+✅ Real-time Tips
+✅ VIP Community
 
-✅100% ACCURACY 
-✅VIRTUAL EXPERT
-✅REAL TIME TIP
-✅COMMUNITY FOR EXPERTS
-💰 *Subscribe:* ₦{self.config.SUBSCRIPTION_AMOUNT / 3000:.0f}/month"""
+💰 *Subscribe:* ₦{self.config.SUBSCRIPTION_AMOUNT / 100:.0f}/month"""
         
         keyboard = [
             [InlineKeyboardButton("💎 Subscribe", callback_data="subscribe")],
@@ -857,7 +858,7 @@ Hello {user.first_name}! 👋
         user = update.effective_user
         self.db.add_user(user.id, user.username, user.first_name)
         
-        price_naira = self.config.SUBSCRIPTION_AMOUNT / 3000
+        price_naira = self.config.SUBSCRIPTION_AMOUNT / 100
         subscribe_text = f"""💎 *Premium Subscription*
 
 💰 *Price:* ₦{price_naira:.0f}
@@ -920,7 +921,7 @@ Click below to subscribe!"""
 👤 User: {user.first_name}
 ❌ Status: Free User
 
-💰 Subscribe: ₦{self.config.SUBSCRIPTION_AMOUNT / 3000:.0f}/month"""
+💰 Subscribe: ₦{self.config.SUBSCRIPTION_AMOUNT / 100:.0f}/month"""
             
             keyboard = [[InlineKeyboardButton("💎 Subscribe", callback_data="subscribe")]]
         
@@ -1141,7 +1142,7 @@ Subscribe to get access!
                 
                 payment_text = f"""💳 *Payment Details*
 
-💰 Amount: ₦{self.config.SUBSCRIPTION_AMOUNT / 3000:.0f}
+💰 Amount: ₦{self.config.SUBSCRIPTION_AMOUNT / 100:.0f}
 ⏰ Duration: 30 Days
 
 📝 *Instructions:*
@@ -1229,7 +1230,7 @@ Transaction: `{payment_result['tx_ref']}`"""
 Welcome to Premium! 💎
 
 📅 Valid Until: {end_date.strftime('%B %d, %Y')}
-💰 Paid: ₦{self.config.SUBSCRIPTION_AMOUNT / 3000:.0f}
+💰 Paid: ₦{self.config.SUBSCRIPTION_AMOUNT / 100:.0f}
 
 🔗 *Your Invite Link:*
 {invite_link}
@@ -1313,7 +1314,7 @@ Use /premium to get invite link!"""
         
         subscribe_text = f"""💎 *Premium Subscription*
 
-💰 Price: ₦{self.config.SUBSCRIPTION_AMOUNT / 3000:.0f}
+💰 Price: ₦{self.config.SUBSCRIPTION_AMOUNT / 100:.0f}
 ⏰ Duration: 30 Days
 
 Click below to subscribe!"""
@@ -1394,200 +1395,7 @@ Use buttons below to navigate."""
 class WebhookHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         try:
-            if self.path == '/' or self.path == '':
-                # Landing page
-                self.send_response(200)
-                self.send_header('Content-type', 'text/html; charset=utf-8')
-                self.end_headers()
-                
-                # Get bot username (remove @ if present)
-                bot_username = CONFIG.PREMIUM_CHANNEL_USERNAME.replace('@', '') if CONFIG.PREMIUM_CHANNEL_USERNAME else 'your_bot'
-                
-                landing_html = f"""
-                <!DOCTYPE html>
-                <html lang="en">
-                <head>
-                    <meta charset="UTF-8">
-                    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-                    <title>OK Virtuals Betting Bot - Premium Predictions</title>
-                    <style>
-                        * {{
-                            margin: 0;
-                            padding: 0;
-                            box-sizing: border-box;
-                        }}
-                        body {{
-                            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-                            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-                            min-height: 100vh;
-                            display: flex;
-                            align-items: center;
-                            justify-content: center;
-                            padding: 20px;
-                        }}
-                        .container {{
-                            background: white;
-                            border-radius: 20px;
-                            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
-                            max-width: 600px;
-                            width: 100%;
-                            padding: 40px;
-                            text-align: center;
-                            animation: slideIn 0.5s ease-out;
-                        }}
-                        @keyframes slideIn {{
-                            from {{
-                                opacity: 0;
-                                transform: translateY(-30px);
-                            }}
-                            to {{
-                                opacity: 1;
-                                transform: translateY(0);
-                            }}
-                        }}
-                        .logo {{
-                            font-size: 80px;
-                            margin-bottom: 20px;
-                            animation: bounce 2s infinite;
-                        }}
-                        @keyframes bounce {{
-                            0%, 100% {{ transform: translateY(0); }}
-                            50% {{ transform: translateY(-10px); }}
-                        }}
-                        h1 {{
-                            color: #333;
-                            font-size: 32px;
-                            margin-bottom: 10px;
-                        }}
-                        .subtitle {{
-                            color: #666;
-                            font-size: 18px;
-                            margin-bottom: 30px;
-                        }}
-                        .features {{
-                            background: #f8f9fa;
-                            border-radius: 10px;
-                            padding: 25px;
-                            margin: 30px 0;
-                            text-align: left;
-                        }}
-                        .feature {{
-                            display: flex;
-                            align-items: center;
-                            margin: 15px 0;
-                            font-size: 16px;
-                            color: #333;
-                        }}
-                        .feature-icon {{
-                            font-size: 24px;
-                            margin-right: 15px;
-                            min-width: 30px;
-                        }}
-                        .btn {{
-                            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-                            color: white;
-                            text-decoration: none;
-                            padding: 18px 40px;
-                            border-radius: 50px;
-                            font-size: 18px;
-                            font-weight: bold;
-                            display: inline-block;
-                            margin: 20px 0;
-                            transition: transform 0.3s, box-shadow 0.3s;
-                            box-shadow: 0 5px 15px rgba(102, 126, 234, 0.4);
-                        }}
-                        .btn:hover {{
-                            transform: translateY(-3px);
-                            box-shadow: 0 8px 25px rgba(102, 126, 234, 0.6);
-                        }}
-                        .price {{
-                            background: #28a745;
-                            color: white;
-                            padding: 15px 25px;
-                            border-radius: 10px;
-                            font-size: 24px;
-                            font-weight: bold;
-                            margin: 20px 0;
-                            display: inline-block;
-                        }}
-                        .status {{
-                            margin-top: 30px;
-                            padding: 15px;
-                            background: #e7f4ff;
-                            border-radius: 10px;
-                            color: #0066cc;
-                            font-size: 14px;
-                        }}
-                        .footer {{
-                            margin-top: 30px;
-                            color: #999;
-                            font-size: 14px;
-                        }}
-                        @media (max-width: 600px) {{
-                            .container {{
-                                padding: 30px 20px;
-                            }}
-                            h1 {{
-                                font-size: 24px;
-                            }}
-                            .logo {{
-                                font-size: 60px;
-                            }}
-                        }}
-                    </style>
-                </head>
-                <body>
-                    <div class="container">
-                        <div class="logo">🎯</div>
-                        <h1>OK Virtuals Betting Bot</h1>
-                        <p class="subtitle">Your Gateway to Premium Betting Predictions</p>
-                        
-                        <div class="features">
-                            <div class="feature">
-                                <span class="feature-icon">✅</span>
-                                <span>Daily Expert Predictions</span>
-                            </div>
-                            <div class="feature">
-                                <span class="feature-icon">📊</span>
-                                <span>90%+ Accuracy Rate</span>
-                            </div>
-                            <div class="feature">
-                                <span class="feature-icon">💎</span>
-                                <span>Exclusive VIP Community</span>
-                            </div>
-                            <div class="feature">
-                                <span class="feature-icon">⚡</span>
-                                <span>Real-time Betting Tips</span>
-                            </div>
-                            <div class="feature">
-                                <span class="feature-icon">🏆</span>
-                                <span>Professional Analysis</span>
-                            </div>
-                        </div>
-                        
-                        <div class="price">₦{CONFIG.SUBSCRIPTION_AMOUNT / 3000:.0f} / Month</div>
-                        
-                        <a href="https://t.me/okvirtualbot" class="btn">
-                            🚀 Start Winning Now
-                        </a>
-                        
-                        <div class="status">
-                            ✓ Bot is Online and Ready<br>
-                            ✓ Secure Payment via Paystack<br>
-                            ✓ Instant Access After Payment
-                        </div>
-                        
-                        <div class="footer">
-                            <p>Need help? Contact <a href="https://t.me/okvirtual001" style="color: #667eea;">@okvirtual001</a></p>
-                            <p style="margin-top: 10px;">© 2025 OK Virtuals. All rights reserved.</p>
-                        </div>
-                    </div>
-                </body>
-                </html>
-                """
-                self.wfile.write(landing_html.encode('utf-8'))
-                
-            elif self.path.startswith('/health'):
+            if self.path.startswith('/health'):
                 health_status = {
                     "status": "healthy",
                     "timestamp": datetime.now(timezone.utc).isoformat(),
@@ -1598,199 +1406,12 @@ class WebhookHandler(BaseHTTPRequestHandler):
                 self.send_header('Content-type', 'application/json')
                 self.end_headers()
                 self.wfile.write(json.dumps(health_status).encode())
-                
-            elif self.path.startswith('/payment/callback'):
-                # Payment callback - redirect to success page
-                self.send_response(200)
-                self.send_header('Content-type', 'text/html; charset=utf-8')
-                self.end_headers()
-                
-                # Get bot username
-                bot_username = CONFIG.PREMIUM_CHANNEL_USERNAME.replace('@', '') if CONFIG.PREMIUM_CHANNEL_USERNAME else 'your_bot'
-                
-                success_html = f"""
-                <!DOCTYPE html>
-                <html lang="en">
-                <head>
-                    <meta charset="UTF-8">
-                    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-                    <title>Payment Successful - OK Virtuals</title>
-                    <style>
-                        * {{
-                            margin: 0;
-                            padding: 0;
-                            box-sizing: border-box;
-                        }}
-                        body {{
-                            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-                            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-                            min-height: 100vh;
-                            display: flex;
-                            align-items: center;
-                            justify-content: center;
-                            padding: 20px;
-                        }}
-                        .container {{
-                            background: white;
-                            border-radius: 20px;
-                            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
-                            max-width: 500px;
-                            width: 100%;
-                            padding: 40px;
-                            text-align: center;
-                            animation: slideIn 0.5s ease-out;
-                        }}
-                        @keyframes slideIn {{
-                            from {{
-                                opacity: 0;
-                                transform: scale(0.9);
-                            }}
-                            to {{
-                                opacity: 1;
-                                transform: scale(1);
-                            }}
-                        }}
-                        .success-icon {{
-                            font-size: 80px;
-                            margin-bottom: 20px;
-                            animation: bounce 1s ease-out;
-                        }}
-                        @keyframes bounce {{
-                            0%, 100% {{ transform: scale(1); }}
-                            50% {{ transform: scale(1.1); }}
-                        }}
-                        h1 {{
-                            color: #28a745;
-                            font-size: 32px;
-                            margin-bottom: 15px;
-                        }}
-                        p {{
-                            color: #666;
-                            font-size: 16px;
-                            line-height: 1.6;
-                            margin-bottom: 20px;
-                        }}
-                        .steps {{
-                            background: #f8f9fa;
-                            border-radius: 10px;
-                            padding: 20px;
-                            margin: 25px 0;
-                            text-align: left;
-                        }}
-                        .steps h3 {{
-                            color: #333;
-                            font-size: 18px;
-                            margin-bottom: 15px;
-                            text-align: center;
-                        }}
-                        .step {{
-                            display: flex;
-                            align-items: center;
-                            margin: 12px 0;
-                            padding: 10px;
-                            background: white;
-                            border-radius: 8px;
-                        }}
-                        .step-number {{
-                            background: #667eea;
-                            color: white;
-                            width: 30px;
-                            height: 30px;
-                            border-radius: 50%;
-                            display: flex;
-                            align-items: center;
-                            justify-content: center;
-                            font-weight: bold;
-                            margin-right: 15px;
-                            flex-shrink: 0;
-                        }}
-                        .btn {{
-                            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-                            color: white;
-                            text-decoration: none;
-                            padding: 16px 35px;
-                            border-radius: 50px;
-                            font-size: 18px;
-                            font-weight: bold;
-                            display: inline-block;
-                            margin: 20px 0;
-                            transition: transform 0.3s, box-shadow 0.3s;
-                            box-shadow: 0 5px 15px rgba(102, 126, 234, 0.4);
-                        }}
-                        .btn:hover {{
-                            transform: translateY(-3px);
-                            box-shadow: 0 8px 25px rgba(102, 126, 234, 0.6);
-                        }}
-                    </style>
-                </head>
-                <body>
-                    <div class="container">
-                        <div class="success-icon">🎉</div>
-                        <h1>Payment Successful!</h1>
-                        <p>Your payment has been received successfully. Complete the verification to unlock premium access.</p>
-                        
-                        <div class="steps">
-                            <h3>Next Steps:</h3>
-                            <div class="step">
-                                <div class="step-number">1</div>
-                                <span>Return to the Telegram bot</span>
-                            </div>
-                            <div class="step">
-                                <div class="step-number">2</div>
-                                <span>Click "✅ I have Paid" button</span>
-                            </div>
-                            <div class="step">
-                                <div class="step-number">3</div>
-                                <span>Get instant VIP access!</span>
-                            </div>
-                        </div>
-                        
-                        <a href="https://t.me/okvirtualbot" class="btn">
-                            ↩️ Return to Bot
-                        </a>
-                        
-                        <p style="margin-top: 20px; font-size: 14px; color: #999;">
-                            Need help? Contact <a href="https://t.me/okvirtual001" style="color: #667eea;">@okvirtual001</a>
-                        </p>
-                    </div>
-                </body>
-                </html>
-                """
-                self.wfile.write(success_html.encode('utf-8'))
-                
             else:
                 self.send_response(404)
-                self.send_header('Content-type', 'text/html; charset=utf-8')
                 self.end_headers()
                 
-                not_found_html = """
-                <!DOCTYPE html>
-                <html>
-                <head>
-                    <title>404 - Page Not Found</title>
-                    <style>
-                        body {
-                            font-family: Arial, sans-serif;
-                            text-align: center;
-                            padding: 50px;
-                            background: #f5f5f5;
-                        }
-                        h1 { color: #ff6b6b; font-size: 48px; }
-                        p { color: #666; font-size: 18px; }
-                        a { color: #667eea; text-decoration: none; font-weight: bold; }
-                    </style>
-                </head>
-                <body>
-                    <h1>404</h1>
-                    <p>Page not found</p>
-                    <a href="/">← Go back home</a>
-                </body>
-                </html>
-                """
-                self.wfile.write(not_found_html.encode('utf-8'))
-                
         except Exception as e:
-            logger.error(f"GET request error: {str(e)}")
+            logger.error(f"Health check error: {str(e)}")
             self.send_response(500)
             self.end_headers()
     
@@ -1888,7 +1509,7 @@ def main():
     print("🎯 OK VIRTUALS BOT RUNNING (PAYSTACK)")
     print("=" * 50)
     print(f"💚 Health: http://0.0.0.0:{CONFIG.PORT}/health")
-    print(f"💰 Price: ₦{CONFIG.SUBSCRIPTION_AMOUNT / 3000:.0f}")
+    print(f"💰 Price: ₦{CONFIG.SUBSCRIPTION_AMOUNT / 100:.0f}")
     print(f"📱 Support: @okvirtual001")
     print(f"💳 Payment: Paystack")
     print("=" * 50)
